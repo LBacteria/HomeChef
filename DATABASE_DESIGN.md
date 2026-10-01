@@ -58,8 +58,8 @@ v0.1 只有**两张表**：
 │  standard_ingredient（标准食材）           │
 │  ─────────────────────────────────────    │
 │  PK  id              INTEGER              │
-│      name            TEXT  UNIQUE         │
-│      name_normalized TEXT  UNIQUE         │
+│      name            TEXT  NOT NULL       │
+│      name_normalized TEXT  NOT NULL UNIQUE│
 │      quantity        REAL                 │
 │      unit            TEXT                 │
 │      purchase_date   TEXT  NULL           │
@@ -101,8 +101,8 @@ v0.1 只有**两张表**：
 | 字段名 | SQLite 类型 | NOT NULL | 默认值 | UNIQUE | 用途 | 设计理由 |
 |---|---|---|---|---|---|---|
 | `id` | INTEGER | ✅ | — | PK | 主键 | 见第 5 节 |
-| `name` | TEXT | ✅ | — | ✅ | 标准食材名称，用于显示，如 `番茄` | 用户看到的名字。保留用户输入时的原始形式（仅去掉首尾空格），**不做大小写改写**，避免"Tomato"被存成"tomato"影响显示 |
-| `name_normalized` | TEXT | ✅ | — | ✅ | 归一化后的名称，**仅用于匹配和唯一性判断** | 见第 6 节。唯一性约束建在这一列上 |
+| `name` | TEXT | ✅ | — | ❌ | 标准食材名称，用于显示，如 `番茄` | 用户看到的名字。保留用户输入时的原始形式（仅去掉首尾空格），**不做大小写改写**，避免"Tomato"被存成"tomato"影响显示。**不设置 UNIQUE**——唯一性由 `name_normalized` 保证，见下方说明 |
+| `name_normalized` | TEXT | ✅ | — | ✅ | 归一化后的名称，**仅用于匹配和唯一性判断** | 见第 6 节。**canonical ingredient 的唯一性由这一列保证**，UNIQUE 约束建在这里 |
 | `quantity` | REAL | ✅ | `0` | ❌ | 当前库存数量 | 实数，支持 `0.5 千克`。非负由 CHECK 保证 |
 | `unit` | TEXT | ✅ | — | ❌ | 单位，固定枚举 | 见第 5.2 节。CHECK 限定取值 |
 | `purchase_date` | TEXT | ❌ | NULL | ❌ | 购买日期，可选 | 见第 8 节。ISO 8601 日期字符串 |
@@ -113,12 +113,27 @@ v0.1 只有**两张表**：
 
 **为什么需要 `name` 和 `name_normalized` 两列：**
 
-- `name` 保存**显示用**的原始形式
-- `name_normalized` 保存**匹配用**的归一化形式
-- UNIQUE 约束建在 `name_normalized` 上
+- `name` 保存**显示用**的原始形式（**不设 UNIQUE**）
+- `name_normalized` 保存**匹配用**的归一化形式（**设 UNIQUE**）
+- **UNIQUE 约束只建在 `name_normalized` 上**
+- **canonical ingredient 的唯一性由 `name_normalized` 保证**
 
 这样"番茄"和"番茄 "（带尾空格）会被判定为重复，但显示时仍保留用户原本输入的写法。
 **代价是多一列**，收益是"唯一性判断"和"显示"两件事互不干扰。
+
+**为什么 `name` 本身不设 UNIQUE：**
+
+`name` 保留用户输入的原始大小写，若对它加 UNIQUE 会与大小写归一化的语义冲突：
+
+```
+name = 'Tomato'  → name_normalized = 'tomato'
+name = 'tomato'  → name_normalized = 'tomato'
+```
+
+两者是**同一个食材**，但 `name` 列是两个不同的值。
+若 `name` 设 UNIQUE，第二条会被错误拒绝，与"大小写归一化后视为同一名称"的规则矛盾。
+
+因此 `name` **只负责显示**，不承担唯一性职责。
 
 > 具体归一化算法见第 6 节。
 
@@ -202,6 +217,9 @@ SQLite 的 `PRAGMA foreign_keys` **默认是 OFF**，必须每个连接显式打
 |---|---|---|
 | `name_normalized` UNIQUE | standard_ingredient | 标准食材名称唯一（决策 4） |
 | `alias_normalized` UNIQUE | ingredient_alias | **别名全局唯一（决策 3、5）** |
+
+**`standard_ingredient.name` 不在上表之中** —— 它保存显示用的原始名称，**不设 UNIQUE**。
+canonical ingredient 的唯一性完全由 `name_normalized` 保证（理由见第 3 节）。
 
 ### 5.5 CHECK 约束汇总
 

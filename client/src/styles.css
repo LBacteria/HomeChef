@@ -1,0 +1,309 @@
+/* HomeChef v0.1 —— 基础样式
+ *
+ * 目标：简洁、清楚、能用（PRD 第 17 条）。
+ * 不引入 Tailwind / Material UI / Ant Design 等框架。
+ * 使用普通 CSS，兼顾窄屏不溢出。
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --border: #d8d8d8;
+  --muted: #6b6b6b;
+  --primary: #2f7d4f;
+  --danger: #b4322c;
+  --bg: #fafafa;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  background: var(--bg);
+  color: #1f1f1f;
+  line-height: 1.5;
+}
+
+.page {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+.page-header h1 {
+  margin: 0 0 8px;
+  font-size: 1.6rem;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.section-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+/* ---- 按钮 ---- */
+
+button {
+  font: inherit;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #276843;
+}
+
+button.danger {
+  background: #fff;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+  background: #fdf0f0;
+}
+
+/* ---- 列表与卡片 ---- */
+
+.card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.card.expired {
+  border-color: #e6b8b6;
+  background: #fffafa;
+}
+
+.card-main {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.card-name {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.card-quantity {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.card-meta {
+  margin: 2px 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.expired-text {
+  color: var(--danger);
+}
+
+.expired-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---- 状态提示 ---- */
+
+.status,
+.empty-state {
+  padding: 24px 0;
+  color: var(--muted);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e6b8b6;
+  border-radius: 8px;
+  background: #fdf0f0;
+  color: var(--danger);
+}
+
+.load-error p {
+  margin: 0;
+}
+
+/* ---- 弹窗 ---- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.modal {
+  width: 100%;
+  max-width: 460px;
+  padding: 20px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.modal h2 {
+  margin: 0 0 16px;
+  font-size: 1.1rem;
+}
+
+.modal-ingredient-name {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.modal-meta {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.modal form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+.modal input,
+.modal select,
+.modal textarea {
+  font: inherit;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  width: 100%;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.field-error {
+  margin: -4px 0 8px;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.form-error {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid #e6b8b6;
+  border-radius: 6px;
+  background: #fdf0f0;
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.consume-preview {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ---- 窄屏 ---- */
+
+@media (max-width: 520px) {
+  .page {
+    padding: 16px 12px 48px;
+  }
+
+  .card {
+    flex-direction: column;
+  }
+
+  .card-actions {
+    width: 100%;
+  }
+
+  .card-actions button {
+    flex: 1;
+  }
+
+  .modal-backdrop {
+    padding: 16px 12px;
+  }
+}
