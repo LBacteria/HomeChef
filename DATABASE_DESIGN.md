@@ -1,442 +1,341 @@
 # HomeChef 数据库设计
 
 > 状态：Draft
-> 日期：2026-10-01
-> 适用范围：**库存系统 v0.1**
+> 日期：2026-10-02
+> 适用范围：**库存系统 v0.1（当前已实现）**
 > 数据库：SQLite + Drizzle ORM
 
 ## 0. 本文档的范围
 
-本文档描述 **HomeChef 库存系统 v0.1** 的数据库设计。
+本文档描述 **HomeChef 库存系统 v0.1** 的数据库设计，与当前实际 schema 和 migration 一致。
 
 - 上游依据：`PROJECT_SPEC.md`、`TECH_STACK.md`、`ARCHITECTURE.md`
-- 本文档**只做设计**，不包含 TypeScript、Drizzle schema、迁移和实际数据库文件
+- 实际实现在 `server/src/db/schema.ts` 与 `server/drizzle/`
 
-### 必须遵守的既有决策
+### 当前决策清单
 
 | # | 决策 |
 |---|---|
-| 1 | 一个标准食材只能有一条库存记录 |
-| 2 | 一个标准食材可以有多个别名 |
-| 3 | 一个别名只能属于一个标准食材 |
-| 4 | 标准食材名称必须唯一 |
-| 5 | 别名文本必须全局唯一 |
-| 6 | 删除标准食材时，其别名级联删除 |
-| 7 | 不记录 consumption history |
-| 8 | 不做单位换算 |
-| 9 | 不允许负库存 |
-| 10 | 数量允许实数 |
-| 11 | 单位使用固定枚举 |
-| 12 | 购买日期可选 |
-| 13 | 过期日期可选 |
-| 14 | 过期日期不能早于购买日期 |
-| 15 | 不提前设计菜谱、推荐、AI、采购清单、多用户等表 |
-| 16 | 不增加 consumption history 表 |
-| 17 | 不设计标准食材合并表或相关机制 |
+| 1 | `ingredient_definition.id` 是稳定身份，使用 `INTEGER PRIMARY KEY AUTOINCREMENT` |
+| 2 | 删除后的定义 ID 不复用；重命名不改变 ID |
+| 3 | 一个定义只有一个默认名称 |
+| 4 | 一个定义可以有 0..N 个别名 |
+| 5 | 一个别名全局只能属于一个定义 |
+| 6 | 默认名称与别名都不能跨表重名（由 Service 检查） |
+| 7 | 一个定义可以有 **0..N 条库存记录**（**无** `UNIQUE(definition_id)`） |
+| 8 | 每个定义至少有一个允许单位 |
+| 9 | 库存单位必须属于该定义的允许单位 |
+| 10 | 删除定义时，别名与允许单位级联删除；**库存不级联删除** |
+| 11 | 有库存记录时拒绝删除定义（`HAS_STOCK`） |
+| 12 | 不记录 consumption history |
+| 13 | 不做单位换算 |
+| 14 | 不允许负库存 |
+| 15 | 数量允许实数（REAL） |
+| 16 | 单位使用固定枚举 |
+| 17 | `purchase_date`（入库日期）必填，默认当天 |
+| 18 | `production_date` 可为空，**绝不反推** |
+| 19 | `expiry_date` 可为空，其来源记录在 `expiry_date_source` |
+| 20 | `expiry_date` 与 `expiry_date_source` 必须成对一致 |
+| 21 | 不提前设计菜谱、推荐、AI、采购清单、多用户等表 |
+| 22 | 不设计定义合并表或相关机制 |
+| 23 | 储存方式（常温/冷藏/冷冻）是库存属性，当前不影响保质期计算 |
 
 ---
 
 ## 1. 数据库设计目标
 
-1. **正确**：别名唯一性、库存非负等关键规则由数据库强制，任何写入路径都无法绕过
-2. **简单**：只有两张表，没有为未来功能预留的字段和表
-3. **可读**：能用 SQLite 命令行工具直接看懂数据
-4. **可维护**：字段含义明确，约束有明确理由
-5. **类型安全**：配合 Drizzle 在 TypeScript 侧获得可靠类型
-6. **能可靠比较和扣减**：数量的存储方式必须保证"够不够"和"扣多少"不会因精度问题出错
-
-第 6 条是本设计的核心难点，见第 7 节。
+1. **正确**：名称唯一性、别名全局唯一、库存非负等关键规则尽可能由数据库强制
+2. **身份稳定**：定义 ID 不复用，改名不影响关联
+3. **简单**：只有 4 张表，没有为未来功能预留的字段和表
+4. **可读**：能用 SQLite 命令行工具直接看懂数据
+5. **可维护**：字段含义明确，约束有明确理由
+6. **类型安全**：配合 Drizzle 在 TypeScript 侧获得可靠类型
+7. **能可靠比较和扣减**：数量的存储方式必须保证"够不够"和"扣多少"不会因精度问题出错
 
 ---
 
 ## 2. ER / 表关系
 
-v0.1 只有**两张表**：
+当前有 **4 张表**：
 
 ```
-┌──────────────────────────────────────────┐
-│  standard_ingredient（标准食材）           │
-│  ─────────────────────────────────────    │
-│  PK  id              INTEGER              │
-│      name            TEXT  NOT NULL       │
-│      name_normalized TEXT  NOT NULL UNIQUE│
-│      quantity        REAL                 │
-│      unit            TEXT                 │
-│      purchase_date   TEXT  NULL           │
-│      expiry_date     TEXT  NULL           │
-│      note            TEXT  NULL           │
-│      created_at      TEXT                 │
-│      updated_at      TEXT                 │
-└────────────────┬─────────────────────────┘
-                 │
-                 │ 1 : N
-                 │ ON DELETE CASCADE
-                 ▼
-┌──────────────────────────────────────────┐
-│  ingredient_alias（食材别名）              │
-│  ─────────────────────────────────────    │
-│  PK  id              INTEGER              │
-│  FK  ingredient_id   INTEGER              │
-│      alias           TEXT                 │
-│      alias_normalized TEXT  UNIQUE        │
-│      created_at      TEXT                 │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  ingredient_definition（食材定义）             │
+│  ──────────────────────────────────────────  │
+│  PK  id                        INTEGER       │
+│        ↑ AUTOINCREMENT（ID 永不复用）          │
+│      name                      TEXT NOT NULL │
+│      name_normalized           TEXT NOT NULL UNIQUE
+│      estimated_shelf_life_days INTEGER NULL  │
+│      created_at / updated_at   TEXT NOT NULL │
+└───┬────────────────────────┬─────────────────┘
+    │                        │
+    │ 1 : N                  │ 1 : N
+    │ ON DELETE CASCADE      │ ON DELETE CASCADE
+    ▼                        ▼
+┌──────────────────────┐  ┌──────────────────────────────┐
+│  ingredient_alias    │  │  ingredient_definition_unit  │
+│  ──────────────────  │  │  ──────────────────────────  │
+│  PK  id              │  │  PK  id                      │
+│  FK  definition_id   │  │  FK  definition_id           │
+│      alias           │  │      unit                    │
+│      alias_normalized│  │      created_at              │
+│        UNIQUE        │  │  UNIQUE(definition_id, unit) │
+│      created_at      │  │  CHECK(unit IN 10 个枚举)     │
+└──────────────────────┘  └──────────────────────────────┘
+
+    ┌───────────────────────────────────────────────┐
+    │ 1 : N  ⚠️ definition_id **没有 UNIQUE**         │
+    │ ON DELETE RESTRICT（删定义不级联删库存）         │
+    ▼
+┌────────────────────────────────────────────────┐
+│  standard_ingredient（库存记录）                │
+│  ──────────────────────────────────────────    │
+│  PK  id                    INTEGER             │
+│  FK  definition_id         INTEGER NOT NULL    │
+│      quantity              REAL NOT NULL DEF 0 │
+│        CHECK(quantity >= 0)                    │
+│      unit                  TEXT NOT NULL       │
+│        CHECK(unit IN 10 个枚举)                 │
+│      purchase_date         TEXT NOT NULL       │
+│      production_date       TEXT NULL           │
+│      expiry_date           TEXT NULL           │
+│      expiry_date_source    TEXT NULL           │
+│      storage_method        TEXT NOT NULL       │
+│        DEFAULT '常温'                           │
+│        CHECK(IN 常温/冷藏/冷冻)                  │
+│      note                  TEXT NULL           │
+│      created_at / updated_at TEXT NOT NULL     │
+│                                                │
+│  CHECK: expiry 与 source 成对一致                │
+│  CHECK: production_date <= purchase_date       │
+│  CHECK: manual expiry >= purchase_date         │
+└────────────────────────────────────────────────┘
 ```
 
 **关系说明：**
 
-| 关系 | 基数 | 说明 |
+| 关系 | 基数 | 删除行为 |
 |---|---|---|
-| standard_ingredient → ingredient_alias | 1 : N | 一个标准食材可有多个别名 |
-| ingredient_alias → standard_ingredient | N : 1 | 一个别名只属于一个标准食材 |
-| 库存归属于 | standard_ingredient | **库存只挂在标准食材上，不挂在别名上** |
+| ingredient_definition → ingredient_alias | 1 : N | CASCADE |
+| ingredient_definition → ingredient_definition_unit | 1 : N | CASCADE |
+| ingredient_definition → standard_ingredient | **1 : N** | **RESTRICT** |
 
-**关键设计点：库存是标准食材的属性，不是别名的属性。**
-这正是"输入西红柿，库存记在番茄上"这一行为的数据库基础。
+**关键设计点：**
+
+1. **名称不是身份。** 名称与别名是可以修改的显示/搜索属性，所有关联使用 `definition_id`。
+2. **同一食材可以有多条库存记录。** 例如「土豆 3 个」「土豆 1 袋」「土豆 1 千克」是三条独立记录。
+3. **库存不随定义删除。** 外键使用 RESTRICT，Service 在其中提前检查并返回 `HAS_STOCK`。
 
 ---
 
-## 3. `standard_ingredient` 字段设计
+## 3. `ingredient_definition` 字段设计
 
-| 字段名 | SQLite 类型 | NOT NULL | 默认值 | UNIQUE | 用途 | 设计理由 |
-|---|---|---|---|---|---|---|
-| `id` | INTEGER | ✅ | — | PK | 主键 | 见第 5 节 |
-| `name` | TEXT | ✅ | — | ❌ | 标准食材名称，用于显示，如 `番茄` | 用户看到的名字。保留用户输入时的原始形式（仅去掉首尾空格），**不做大小写改写**，避免"Tomato"被存成"tomato"影响显示。**不设置 UNIQUE**——唯一性由 `name_normalized` 保证，见下方说明 |
-| `name_normalized` | TEXT | ✅ | — | ✅ | 归一化后的名称，**仅用于匹配和唯一性判断** | 见第 6 节。**canonical ingredient 的唯一性由这一列保证**，UNIQUE 约束建在这里 |
-| `quantity` | REAL | ✅ | `0` | ❌ | 当前库存数量 | 实数，支持 `0.5 千克`。非负由 CHECK 保证 |
-| `unit` | TEXT | ✅ | — | ❌ | 单位，固定枚举 | 见第 5.2 节。CHECK 限定取值 |
-| `purchase_date` | TEXT | ❌ | NULL | ❌ | 购买日期，可选 | 见第 8 节。ISO 8601 日期字符串 |
-| `expiry_date` | TEXT | ❌ | NULL | ❌ | 过期日期，可选 | 见第 8 节 |
-| `note` | TEXT | ❌ | NULL | ❌ | 备注 | 可选，自由文本 |
-| `created_at` | TEXT | ✅ | — | ❌ | 创建时间 | ISO 8601 时间戳，便于排查问题 |
-| `updated_at` | TEXT | ✅ | — | ❌ | 最后修改时间 | 同上 |
+| 字段名 | SQLite 类型 | NOT NULL | 默认值 | UNIQUE | 用途 |
+|---|---|---|---|---|---|
+| `id` | INTEGER | ✅ | — | PK | 稳定身份，**AUTOINCREMENT** |
+| `name` | TEXT | ✅ | — | ❌ | 默认名称（显示用，保留用户输入形式） |
+| `name_normalized` | TEXT | ✅ | — | ✅ | 归一化名称，用于匹配与唯一性 |
+| `estimated_shelf_life_days` | INTEGER | ❌ | NULL | ❌ | 默认预估保质期（天），用于**新库存**的到期日估算 |
+| `created_at` | TEXT | ✅ | — | ❌ | ISO 8601 时间戳 |
+| `updated_at` | TEXT | ✅ | — | ❌ | ISO 8601 时间戳 |
 
-**为什么需要 `name` 和 `name_normalized` 两列：**
+**CHECK 约束：**
 
-- `name` 保存**显示用**的原始形式（**不设 UNIQUE**）
-- `name_normalized` 保存**匹配用**的归一化形式（**设 UNIQUE**）
-- **UNIQUE 约束只建在 `name_normalized` 上**
-- **canonical ingredient 的唯一性由 `name_normalized` 保证**
-
-这样"番茄"和"番茄 "（带尾空格）会被判定为重复，但显示时仍保留用户原本输入的写法。
-**代价是多一列**，收益是"唯一性判断"和"显示"两件事互不干扰。
-
-**为什么 `name` 本身不设 UNIQUE：**
-
-`name` 保留用户输入的原始大小写，若对它加 UNIQUE 会与大小写归一化的语义冲突：
-
-```
-name = 'Tomato'  → name_normalized = 'tomato'
-name = 'tomato'  → name_normalized = 'tomato'
+```sql
+CHECK (estimated_shelf_life_days IS NULL OR estimated_shelf_life_days >= 0)
 ```
 
-两者是**同一个食材**，但 `name` 列是两个不同的值。
-若 `name` 设 UNIQUE，第二条会被错误拒绝，与"大小写归一化后视为同一名称"的规则矛盾。
+允许 `0`（表示当天到期），不允许负数。暂不设人为上限。
 
-因此 `name` **只负责显示**，不承担唯一性职责。
+### 3.1 为什么必须使用 AUTOINCREMENT
 
-> 具体归一化算法见第 6 节。
+`ingredient_definition.id` 是食材的**稳定内部身份**，要求「删除后 ID 永不复用」。
+
+普通 `INTEGER PRIMARY KEY`（rowid 别名）**不能**提供这个保证：
+
+- SQLite 分配新 rowid 的算法是「当前最大 rowid + 1」
+- 若删除了最大 ID 的那一行，下一行会**重新使用**该 ID
+
+**实测对照：**
+
+| 表类型 | 操作 | 结果 |
+|---|---|---|
+| 普通 `INTEGER PRIMARY KEY` | 插入 1,2,3 → 删 id=3 → 再插入 | ❌ 新记录复用 **id=3** |
+| `INTEGER PRIMARY KEY AUTOINCREMENT` | 同上 | ✅ 新记录使用 **id=4** |
+
+AUTOINCREMENT 会创建 `sqlite_sequence` 表记录历史最大 ID，保证新 ID 严格递增、永不复用。
+
+**代价**：多一张内部表 + 每次插入一次额外查找。
+对「ID 即身份」的要求而言，这个代价是必须付的。
+
+> 其他三张表（alias / unit / stock）**不使用** AUTOINCREMENT：
+> 它们的 ID 只是行标识，不复用没有业务含义。
+
+### 3.2 `name` 与 `name_normalized` 的区别
+
+- `name` 保存**显示用**的原始形式（仅去首尾空格，不改写大小写）
+- `name_normalized` 保存**匹配用**的归一化形式（`trim().toLowerCase()`）
+- UNIQUE 约束**只建在 `name_normalized` 上**
+
+这样 `番茄` 和 ` 番茄 ` 会被判定为重复，但显示时保留用户原本的写法。
+
+**为什么 `name` 不设 UNIQUE：** `name` 保留原始大小写，若加 UNIQUE 会与归一化语义冲突
+（`Tomato` 与 `tomato` 是同一个食材，但 `name` 列是两个不同值）。
 
 ---
 
 ## 4. `ingredient_alias` 字段设计
 
-| 字段名 | SQLite 类型 | NOT NULL | 默认值 | UNIQUE | 用途 | 设计理由 |
-|---|---|---|---|---|---|---|
-| `id` | INTEGER | ✅ | — | PK | 主键 | 见第 5 节 |
-| `ingredient_id` | INTEGER | ✅ | — | ❌ | 外键，指向 `standard_ingredient.id` | 见第 5 节。`ON DELETE CASCADE` |
-| `alias` | TEXT | ✅ | — | ❌ | 别名原文，用于显示，如 `西红柿` | 同 `name`，保留用户输入形式（仅去首尾空格） |
-| `alias_normalized` | TEXT | ✅ | — | ✅ **全局唯一** | 归一化后的别名，用于匹配 | **这条 UNIQUE 约束就是"一个别名只能属于一个标准食材"的落地** |
-| `created_at` | TEXT | ✅ | — | ❌ | 创建时间 | 便于排查问题 |
+| 字段名 | SQLite 类型 | NOT NULL | 默认值 | UNIQUE | 用途 |
+|---|---|---|---|---|---|
+| `id` | INTEGER | ✅ | — | PK | 主键 |
+| `definition_id` | INTEGER | ✅ | — | ❌ | 外键 → `ingredient_definition.id`，`ON DELETE CASCADE` |
+| `alias` | TEXT | ✅ | — | ❌ | 别名原文（显示用） |
+| `alias_normalized` | TEXT | ✅ | — | ✅ **全局唯一** | 归一化别名，用于匹配 |
+| `created_at` | TEXT | ✅ | — | ❌ | ISO 8601 时间戳 |
 
-**注意**：`alias` 本身**不加** UNIQUE，只对 `alias_normalized` 加。
-原因同上——唯一性判断应基于归一化后的值，否则 `TomatO` 和 `tomato` 会被当成两个不同的别名。
+**注意**：`alias` 本身**不加** UNIQUE，只对 `alias_normalized` 加——否则 `TomatO` 和 `tomato` 会被当成两个不同别名。
 
-**`ingredient_id` 上需要索引**，否则 `ON DELETE CASCADE` 和"查某食材的所有别名"都要全表扫描。见第 7 节。
+**`definition_id` 上有索引**，用于「查某定义的所有别名」以及级联删除定位子行。
 
----
+### 4.1 别名绑定在 definition 上（不是库存记录上）
 
-## 5. 主键、外键、约束
+这是刻意的设计：
 
-### 5.1 主键类型
+- 别名描述的是「这个食材还叫什么」，与「现在有多少」无关
+- 若绑定到库存记录，删除库存会导致别名消失——那会丢失食材知识
 
-**选择：`INTEGER PRIMARY KEY`（即 SQLite 的 rowid 别名）**
+### 4.2 别名不会自动从名称迁移
 
-理由：
-
-| 方案 | 优点 | 缺点 | 结论 |
-|---|---|---|---|
-| **INTEGER PRIMARY KEY** | SQLite 原生最快；自动递增；存储开销小；Drizzle 支持好 | 不携带业务含义 | ✅ **采用** |
-| TEXT（UUID） | 可离线生成、不怕合并冲突 | 占用大、索引慢；v0.1 单机单用户**不需要** | ❌ 过度设计 |
-| 复合主键 | 无代理键 | 别名表还是需要代理键；复杂度上升 | ❌ 无收益 |
-
-v0.1 是本地单用户应用，**不存在多端合并或分布式 ID 需求**，整数主键完全够用。
-
-**不使用 `AUTOINCREMENT` 关键字**：SQLite 中 `INTEGER PRIMARY KEY` 本身就会自动分配递增 rowid。
-额外的 `AUTOINCREMENT` 会创建 `sqlite_sequence` 表并带来额外开销，只为保证"ID 永不重用"——v0.1 不需要这个保证。
-
-### 5.2 单位约束
-
-`unit` 使用 CHECK 约束限定为 10 个枚举值：
-
-```
-个、克、千克、毫升、升、包、袋、瓶、盒、罐
-```
-
-**为什么在数据库层加 CHECK：**
-单位一旦出现枚举外的值，所有涉及单位的比较和消耗逻辑都会失去意义。
-必须在最底层拦住。Service 层也要校验（为了返回友好的错误码），但数据库是最后防线。
-
-**为什么不用单独的单位表：**
-10 个固定值、v0.1 不允许用户自定义单位。单独建表 + 外键是过度设计。
-**CHECK 约束足够，且更简单。**
-将来若真需要用户自定义单位，再迁移成表——那时才有真实需求。
-
-### 5.3 外键与删除行为
-
-```
-ingredient_alias.ingredient_id
-  → standard_ingredient.id
-  ON DELETE CASCADE
-  ON UPDATE CASCADE
-```
-
-**`ON DELETE CASCADE` 的理由**：决策 6 明确要求"删除标准食材时，其别名级联删除"。
-别名脱离标准食材没有任何意义——它没有独立存在的价值。
-
-**⚠️ 必须启用外键约束：**
-SQLite 的 `PRAGMA foreign_keys` **默认是 OFF**，必须每个连接显式打开。
-如果忘记开启，`ON DELETE CASCADE` **不会生效**，会留下孤儿别名。
-这是实现阶段最容易踩的坑，见第 12 节。
-
-**`ON UPDATE CASCADE`**：主键是自增整数，正常不会更新。加上是零成本的保险。
-
-### 5.4 UNIQUE 约束汇总
-
-| 约束 | 位置 | 保证 |
-|---|---|---|
-| `name_normalized` UNIQUE | standard_ingredient | 标准食材名称唯一（决策 4） |
-| `alias_normalized` UNIQUE | ingredient_alias | **别名全局唯一（决策 3、5）** |
-
-**`standard_ingredient.name` 不在上表之中** —— 它保存显示用的原始名称，**不设 UNIQUE**。
-canonical ingredient 的唯一性完全由 `name_normalized` 保证（理由见第 3 节）。
-
-### 5.5 CHECK 约束汇总
-
-| 约束 | 位置 | 保证 |
-|---|---|---|
-| `quantity >= 0` | standard_ingredient | 不允许负库存（决策 9） |
-| `unit IN (...)` | standard_ingredient | 单位必须是 10 个枚举值之一（决策 11） |
-| `expiry_date IS NULL OR purchase_date IS NULL OR expiry_date >= purchase_date` | standard_ingredient | 日期关系（决策 14），见第 8 节 |
+`ingredient_definition.name` **不是** `ingredient_alias` 中的一行。
+默认名称切换时由 Service 在事务内同时更新两处（旧名称转为别名、新名称从别名删除）。
 
 ---
 
-## 6. 名称与别名
+## 5. `ingredient_definition_unit` 字段设计
 
-### 6.1 数据库层承担什么
+| 字段名 | SQLite 类型 | NOT NULL | 默认值 | UNIQUE | 用途 |
+|---|---|---|---|---|---|
+| `id` | INTEGER | ✅ | — | PK | 主键 |
+| `definition_id` | INTEGER | ✅ | — | ❌ | 外键 → `ingredient_definition.id`，`ON DELETE CASCADE` |
+| `unit` | TEXT | ✅ | — | ❌ | 允许单位（10 个枚举之一） |
+| `created_at` | TEXT | ✅ | — | ❌ | ISO 8601 时间戳 |
 
-结合 `ARCHITECTURE.md` 已确定的规则（首尾空格归一化、大小写归一化、精确匹配、不做模糊匹配、不用 AI 判断别名）：
+**约束：**
 
-| 规则 | 数据库层承担 | 说明 |
-|---|---|---|
-| 标准食材名称唯一 | ✅ **由 UNIQUE 强制** | 建在 `name_normalized` 上 |
-| 别名全局唯一 | ✅ **由 UNIQUE 强制** | 建在 `alias_normalized` 上 |
-| 首尾空格归一化 | ❌ Service 负责 | 数据库不做隐式 trim |
-| 大小写归一化 | ❌ Service 负责 | 见下文"为什么不用 NOCASE" |
-| 精确匹配 | ✅ 通过 `=` 查询 | 不做 LIKE、不做模糊 |
-| 不做模糊匹配 | ✅ 天然满足 | BINARY 排序规则就是精确匹配 |
-| 不用 AI 判断别名 | ✅ 天然满足 | 数据库层不存在 AI |
+- `UNIQUE(definition_id, unit)` —— 同一食材不重复声明同一单位
+- `CHECK(unit IN ('个','克','千克','毫升','升','包','袋','瓶','盒','罐'))`
 
-**核心原则：数据库强制"唯一性"，Service 负责"归一化"。**
+**「至少一个允许单位」由 Service 保证**（数据库无法表达「每行至少有一条子记录」这类跨行约束）：
 
-数据库不知道什么是"归一化"——那是业务规则。
-但数据库**必须**保证：一旦 Service 算出了归一化值，唯一性就绝对不能违反。
-
-### 6.2 为什么不用 `COLLATE NOCASE`
-
-SQLite 的 `NOCASE` 看起来能省掉 `name_normalized` 这一列，但**不能用**，原因来自[官方文档](https://www.sqlite.org/datatype3.html)：
-
-> NOCASE ... uses sqlite3_strnicmp() for the comparison. Hence the **26 upper case characters of ASCII** are folded to their lower case equivalents... **Note that only ASCII characters are case folded. SQLite does not attempt to do full UTF case folding.**
-
-这意味着：
-
-1. **`NOCASE` 只折叠 ASCII 的 26 个字母**，对中文完全无效——尽管 HomeChef 的名称主要是中文，这点影响不大
-2. **但对非 ASCII 的其他字符无效**，包括带重音的拉丁字母、希腊字母、西里尔字母等
-3. 一旦将来出现 `Café` / `CAFÉ` 这类名称，`NOCASE` 会给出**错误的结果**
-
-而且 `NOCASE` 依赖列上声明的排序规则，**查询时必须让列参与比较**才生效（见官方文档 7.1 节的规则），容易在不同写法下产生不一致行为。
-
-**结论：不使用 NOCASE，改用显式的 `*_normalized` 列。**
-把归一化逻辑放在 Service 层，用 JavaScript 的完整 Unicode 能力处理，数据库只管唯一性。
-这样行为明确、可测试、不依赖数据库的排序规则细节。
-
-### 6.3 "同一个别名只能属于一个标准食材"如何保证
-
-**通过 `alias_normalized` 上的 UNIQUE 约束保证。**
-
-```
-ingredient_alias
-  └── alias_normalized  TEXT NOT NULL UNIQUE   ← 全局唯一，不区分属于哪个食材
-```
-
-关键点是：**这个 UNIQUE 是全局的，不是 `(ingredient_id, alias_normalized)` 复合唯一。**
-
-- ✅ 正确：`alias_normalized` UNIQUE → "西红柿"全局只能出现一次
-- ❌ 错误：`(ingredient_id, alias_normalized)` UNIQUE → 同一个别名可以挂在两个食材下
-
-这两种写法差别很大，实现时必须确认是**前者**。
-
-加上 `ingredient_id` 的外键，就完整保证：
-
-1. 每个别名必定属于某个存在的标准食材（外键）
-2. 每个别名全局只出现一次（UNIQUE）
-3. 删除标准食材时别名一并消失（CASCADE）
-
-**数据库结构本身就排除了"一个别名属于两个食材"的可能**，不依赖 Service 的正确性。
-
-### 6.4 Service 层仍需承担的别名检查
-
-数据库能拦住的，Service 仍要**主动检查并给出友好错误**：
-
-| 场景 | 数据库行为 | Service 应该做的 |
-|---|---|---|
-| 别名已被其他食材占用 | 抛 UNIQUE 违反 | 提前查询，返回 `ALIAS_CONFLICT`（409） |
-| 别名与某标准食材名称重名 | **数据库拦不住** | Service 必须跨表检查（见下） |
-| 标准名称与某别名重名 | **数据库拦不住** | 同上 |
-
-### 6.5 ⚠️ 一个 UNIQUE 约束覆盖不到的情况
-
-这是本设计中**唯一的语义漏洞**，必须明确记录：
-
-**`standard_ingredient.name_normalized` 和 `ingredient_alias.alias_normalized` 是两个独立表的 UNIQUE 约束，数据库无法阻止跨表重名。**
-
-例如：
-
-```
-standard_ingredient: name_normalized = '西红柿'   ← 合法
-ingredient_alias:    alias_normalized  = '西红柿'   ← 也合法（不同表）
-```
-
-结果：输入"西红柿"时，解析顺序上会命中的是标准食材 `西红柿`，而不是 `番茄` 的别名。
-
-**这不是数据损坏，但会造成语义歧义。** `ARCHITECTURE.md` 3.4 节的解析顺序是"先查标准名称，再查别名"，所以行为是**确定的**，不会出错。但用户体验上会困惑。
-
-**处理方式：由 Service 负责跨表检查。** 在以下两个时机：
-
-1. 创建标准食材时：检查该名称是否已是某个别名
-2. 创建别名时：检查该别名是否已是某个标准食材名称
-
-命中则返回 `DUPLICATE_NAME` 或 `ALIAS_CONFLICT`。
-
-**为什么不用数据库约束解决：** SQLite 无法用单个 UNIQUE 约束跨两张表。
-要么用触发器（增加复杂度和调试难度），要么把名称和别名合并到一张表（破坏模型清晰度）。
-**v0.1 不值得为此引入触发器**，交给 Service 检查即可——这正是第 10 节"数据库管唯一性，Service 管业务规则"的边界所在。
-
-### 6.6 已确认决策：跨表重名由 Service 检查，不引入 Trigger
-
-> **最终决定（已确认）：**
->
-> - 标准名称与别名的**跨表重名由 Service 层检查**
-> - **不引入 SQLite Trigger**
-> - v0.1 接受"数据库无法跨表强制唯一性"这一取舍
-
-**因此下文第 12 节"v0.1 明确不包含"中，Trigger 也在不做之列。**
-
-**Service 检查必须覆盖的写入路径**（实现阶段需确保无遗漏）：
-
-| 写入操作 | 必须检查 |
-|---|---|
-| 创建标准食材 | 名称是否已是某别名 |
-| 修改标准食材名称 | 新名称是否已是某别名、是否与其他标准食材重名 |
-| 创建别名 | 别名是否已是某标准食材名称、是否已是其他别名 |
-| 修改别名 | 同上 |
-
-> ⚠️ **注意**：这是 Service 的**业务规则**，不是数据库约束。
-> 若将来新增绕过 Service 的写入路径，这条规则不会被数据库拦下。
-> 这是明确接受的取舍，不是遗漏。
+- 创建定义时要求 `units` 非空
+- 移除单位时若已是最后一个则拒绝
 
 ---
 
-## 7. 数量存储方案及最终选择
+## 6. `standard_ingredient` 字段设计
 
-这是本次设计的重点。
+| 字段名 | SQLite 类型 | NOT NULL | 默认值 | 用途 |
+|---|---|---|---|---|
+| `id` | INTEGER | ✅ | — | **库存记录 ID**（消耗/编辑/删除用它） |
+| `definition_id` | INTEGER | ✅ | — | 外键 → `ingredient_definition.id`，**无 UNIQUE** |
+| `quantity` | REAL | ✅ | `0` | 当前数量 |
+| `unit` | TEXT | ✅ | — | 单位（须在该定义的允许单位内） |
+| `purchase_date` | TEXT | ✅ | — | **入库日期**，YYYY-MM-DD |
+| `production_date` | TEXT | ❌ | NULL | 生产日期，可为空 |
+| `expiry_date` | TEXT | ❌ | NULL | 到期日期 |
+| `expiry_date_source` | TEXT | ❌ | NULL | `estimated` / `manual` / NULL |
+| `storage_method` | TEXT | ✅ | `'常温'` | 常温 / 冷藏 / 冷冻 |
+| `note` | TEXT | ❌ | NULL | 备注 |
+| `created_at` | TEXT | ✅ | — | ISO 8601 时间戳 |
+| `updated_at` | TEXT | ✅ | — | ISO 8601 时间戳 |
+
+### 6.1 CHECK 约束
+
+```sql
+-- 数量非负
+CHECK (quantity >= 0)
+
+-- 单位枚举
+CHECK (unit IN ('个','克','千克','毫升','升','包','袋','瓶','盒','罐'))
+
+-- 储存方式枚举
+CHECK (storage_method IN ('常温','冷藏','冷冻'))
+
+-- 到期日期与来源成对一致
+CHECK (CASE
+  WHEN expiry_date IS NULL
+    THEN CASE WHEN expiry_date_source IS NULL THEN 1 ELSE 0 END
+  ELSE CASE
+    WHEN expiry_date_source IS NULL THEN 0
+    WHEN expiry_date_source IN ('estimated','manual') THEN 1
+    ELSE 0
+  END
+END)
+
+-- 生产日期不晚于入库日期
+CHECK (production_date IS NULL OR production_date <= purchase_date)
+
+-- manual 到期日期不早于入库日期
+CHECK (CASE
+  WHEN expiry_date IS NULL THEN 1
+  WHEN expiry_date_source = 'estimated' THEN 1
+  WHEN expiry_date >= purchase_date THEN 1
+  ELSE 0
+END)
+```
+
+### 6.2 ⚠️ CHECK 约束必须避免 SQL 三值逻辑
+
+SQLite 的 CHECK 约束**只在结果为 FALSE(0) 时拒绝，结果为 NULL 时放行**。
+
+早期版本曾写成：
+
+```sql
+-- ❌ 错误写法：会被 NULL 绕过
+CHECK ((expiry_date IS NULL AND expiry_date_source IS NULL)
+       OR (expiry_date IS NOT NULL AND expiry_date_source IN ('estimated','manual')))
+```
+
+当 `expiry_date` 有值而 `expiry_date_source` 为 NULL 时，`NULL IN (...)` 求值为 **NULL**，
+整体结果既不是 TRUE 也不是 FALSE 而是 NULL → **约束被绕过，非法数据可以写入**。
+
+因此当前实现使用显式返回 0/1 的 `CASE` 表达式。
+
+> **教训**：只检查 DDL 文本（"约束写在那儿了"）不足以确认约束有效，**必须做行为测试**。
+
+### 6.3 为什么 estimated 到期日期允许早于入库日期
+
+例：生产日期 9/28、入库日期 10/2、保质期 2 天 → estimated 到期 9/30 **早于**入库日期。
+
+这是合法状态，表示「按默认保质期估算，入库时已经超过预计日期」。
+
+因此 `manual_expiry_not_before_purchase` 这一约束**只对 manual 生效**。
+
+### 6.4 为什么不使用 UNIQUE(definition_id)
+
+这是 v0.1 的核心模型决策：
+
+- 同一食材可能有多批，单位/日期/储存方式都可能不同
+- 在「不做单位换算」的前提下，`3 个` 与 `1 袋` **无法合并**
+- 因此一个定义对应 **0..N** 条库存记录
+
+---
+
+## 7. 数量存储方案
 
 ### 7.1 需求
 
 | 需求 | 来源 |
 |---|---|
-| 支持实数 | 决策 10 |
-| 不允许负数 | 决策 9 |
-| 不需要单位换算 | 决策 8 |
-| 需要可靠的比较和扣减 | 第 1 节目标 6 |
-| 显示时可以格式化 | 第 1 节目标 3 |
+| 支持实数 | 决策 15 |
+| 不允许负数 | 决策 14 |
+| 不需要单位换算 | 决策 13 |
+| 需要可靠的比较和扣减 | 设计目标 7 |
+| 显示时可以格式化 | 用户体验 |
 
-### 7.2 方案 A：SQLite `REAL`
-
-**做法**：直接存浮点数。
-
-| 优点 | 缺点 |
-|---|---|
-| 最简单，零额外代码 | **IEEE 754 双精度，`0.1` 无法精确表示** |
-| 原生支持 `>=`、`-` 等运算 | `0.1 + 0.2 = 0.30000000000000004` |
-| 索引和排序正常 | 连续扣减会**累积误差** |
-| Drizzle 直接映射为 `number` | 相等判断不可靠（`0.3 !== 0.1+0.2`） |
-
-**误差在实际使用中的表现：**
-
-```
-库存 1.0 千克
-消耗 0.1 千克 × 10 次
-
-期望：0.0
-实际：可能是 1.3877787807814457e-17 或 -1.1e-16
-```
-
-**这会导致两个真实问题：**
-
-1. **`quantity >= 0` 的 CHECK 可能意外失败**——如果结果是 `-1.1e-16`，扣减会被数据库拒绝，用户看到莫名其妙的错误
-2. **"扣减到 0 之后显示 0.0000000000000001"** —— 显示层的四舍五入能掩盖，但数据库里的值确实不是 0
-
-**严重性评估**：v0.1 是家庭食材，单次烹饪的扣减次数通常是个位数，累积到可见误差需要成百上千次操作。
-但上面第 1 条（CHECK 意外失败）**概率虽低，后果是用户无法完成操作**，属于真实风险。
-
-### 7.3 方案 B：整数缩放存储
-
-**做法**：把数量乘以固定倍数（如 1000）存成 INTEGER。
-
-```
-0.5 千克  →  500（存 INTEGER）
-显示时     →  500 / 1000 = 0.5
-```
-
-| 优点 | 缺点 |
-|---|---|
-| **完全精确**，无浮点误差 | 需要在**所有**读写路径做缩放，遗漏一处就出错 |
-| 比较和扣减可靠 | Drizzle schema 与实际值不一致，容易误用 |
-| CHECK 约束行为明确 | 显示和输入都要转换，前端/后端/API 三处都要处理 |
-| | **缩放倍数是多少？** 1000 够吗？用户输入 `0.0001` 怎么办 |
-| | 调试时看到的数字不是真实数量，可读性差 |
-| | 偏离 `ARCHITECTURE.md` 第 5 节"数量类型：实数"的表述 |
-
-**核心问题**：它把"精度"变成了贯穿整个系统的隐式约定。
-每一层都必须记得"这个数字是放大过的"——**这违背了 v0.1"简单优先"的原则**。
-
-### 7.4 方案 C：TEXT / Decimal 字符串
-
-**做法**：用字符串存十进制数（如 `"0.5"`），配合 decimal 库运算。
-
-| 优点 | 缺点 |
-|---|---|
-| **完全精确**，可控精度 | **SQLite 无法对字符串做数值比较和运算** |
-| 适合货币场景 | `>=`、`-` 需要应用层实现，**数据库 CHECK 约束写不出来** |
-| | 排序错误（`"10" < "9"`） |
-| | 需要引入 decimal 库——**决策 17 之外的额外依赖** |
-| | 与 Drizzle 的类型映射别扭 |
-
-**关键缺陷**：`quantity >= 0` 这个 CHECK 约束**无法在数据库层表达**（字符串比较不是数值比较）。
-这直接牺牲了决策 9"不允许负库存"的数据库级保障——**为了精度放弃了更重要的约束**。
-
-### 7.5 方案对比
+### 7.2 方案对比
 
 | 维度 | A. REAL | B. 整数缩放 | C. TEXT/Decimal |
 |---|---|---|---|
@@ -445,58 +344,29 @@ ingredient_alias:    alias_normalized  = '西红柿'   ← 也合法（不同表
 | 数据库 CHECK 能表达 `>= 0` | ✅ 能 | ✅ 能 | ❌ **不能** |
 | 数据库能比较/排序 | ✅ 能 | ✅ 能 | ❌ 不能 |
 | Drizzle 映射 | ✅ `number` | ⚠️ 需转换层 | ⚠️ 别扭 |
-| 调试可读性 | ✅ 直接 | ❌ 看到放大值 | ⚠️ 字符串 |
-| 符合"数量用实数" | ✅ | ❌ 语义偏移 | ❌ |
-| v0.1 规模下够用 | ✅ | ✅（过度） | ✅（过度） |
 
-### 7.6 ✅ 最终选择：方案 A `REAL`，配合 Service 层舍入
+### 7.3 最终选择：REAL + Service 层舍入
 
-**选择 `REAL`。**
+**选择 REAL。**
 
-**为什么：**
+理由：
 
-1. **v0.1 的真实规模不构成精度问题**
-   家庭食材库存，日常操作是"6 个鸡蛋减 2 个""1.5 千克减 0.5 千克"。
-   这类值在 IEEE 754 下的误差是 `1e-16` 量级，**远低于显示精度**。
-   累积到可见误差需要上千次操作，超出 v0.1 的实际使用强度。
+1. **v0.1 的真实规模不构成精度问题**——家庭食材日常操作是「6 个鸡蛋减 2 个」「1.5 千克减 0.5 千克」，
+   这类值在 IEEE 754 下的误差是 `1e-16` 量级，远低于显示精度。
+2. **方案 B / C 的复杂度是为未来需求提前付费**，违背「简单优先」。
+3. **方案 C 的代价不可接受**——它让 `quantity >= 0` 无法在数据库层强制。
+4. **方案 A 保留了完整的数据库约束能力**（CHECK、比较、排序、索引）。
 
-2. **方案 B 和 C 的复杂度是"为未来需求提前付费"**
-   这正是 `PROJECT_SPEC.md` 第 9 节"简单优先"明确反对的。
-   B 需要全链路缩放约定，C 需要额外依赖并**牺牲数据库 CHECK 约束**。
+**配套措施**（集中在 `server/src/services/quantity.ts`）：
 
-3. **方案 C 的代价不可接受**
-   它让 `quantity >= 0` 无法在数据库层强制，等于放弃了决策 9 的底层保障。
-   用"更高的精度"换取"更弱的约束保证"是亏的。
+| 措施 | 说明 |
+|---|---|
+| ① 写入前舍入 | 舍入到 **3 位小数**（`QUANTITY_DECIMALS = 3`） |
+| ② 扣减后钳制 | 容差 `1e-9`（`QUANTITY_EPSILON`）内的负值钳制为 0 |
+| ③ 显示时格式化 | 前端 `formatQuantity()` 舍入后再显示 |
+| ④ 比较用容差 | 「库存是否足够」使用容差比较，而非严格 `>=` |
 
-4. **方案 A 保留了完整的数据库约束能力**
-   CHECK、比较、排序、索引全部可用，且是 SQLite 原生最优路径。
-
-**必须配套的措施（这是选择 A 的前提，不能省）：**
-
-| 措施 | 说明 | 状态 |
-|---|---|---|
-| **① 写入前舍入** | Service 层在所有写入前把数量舍入到固定小数位（建议 3 位），消除大部分累积误差 | ✅ **已确认** |
-| **② 扣减后钳制** | 扣减结果若在容差内（如 `1e-9`）为负，钳制为 `0`，避免 CHECK 意外失败 | ✅ **已确认** |
-| **③ 显示时格式化** | 输出前舍入到合适位数（建议 2 位），彻底隐藏浮点噪声 | ✅ **已确认** |
-| **④ 比较用容差** | "库存是否足够"的判断使用容差比较，而非严格 `>=` | ✅ **已确认** |
-
-> 措施 ② 是防止"CHECK 意外失败"的关键。没有它，方案 A 的那个低概率风险依然存在。
-
-**已确认决策：**
-
-> 数量使用 SQLite `REAL`，由 **Service 层统一负责舍入和扣减后钳制**。
-> 舍入与钳制逻辑**集中在一处实现**，不允许散落在各个调用点。
-
-**这个选择的本质：用 Service 层几行明确的舍入代码，换取数据库层的完整约束能力和最低的实现复杂度。**
-
-**何时应该重新评估：**
-如果将来出现以下任一情况，再考虑迁移到方案 B：
-
-- 需要单位换算（决策 8 变化）
-- 出现金额相关字段
-- 实际观察到累积误差导致问题
-
-届时是**有真实依据的决策**，而不是现在的猜测。
+**何时重新评估**：需要单位换算、出现金额字段、或实际观察到累积误差导致问题。
 
 ---
 
@@ -508,475 +378,283 @@ ingredient_alias:    alias_normalized  = '西红柿'   ← 也合法（不同表
 
 | 字段 | 格式 | 示例 |
 |---|---|---|
-| `purchase_date` | `YYYY-MM-DD` | `2026-10-01` |
-| `expiry_date` | `YYYY-MM-DD` | `2026-10-15` |
-| `created_at` / `updated_at` | `YYYY-MM-DDTHH:MM:SS.sssZ` | `2026-10-01T13:12:37.000Z` |
+| `purchase_date` | `YYYY-MM-DD` | `2026-10-02` |
+| `production_date` | `YYYY-MM-DD` | `2026-09-28` |
+| `expiry_date` | `YYYY-MM-DD` | `2026-10-10` |
+| `created_at` / `updated_at` | `YYYY-MM-DDTHH:MM:SS.sssZ` | `2026-10-02T06:41:07.000Z` |
 
 **为什么用 TEXT + ISO 8601：**
 
-来自[官方文档](https://www.sqlite.org/datatype3.html)：SQLite 没有专门的日期类型，可选 TEXT（ISO8601）、REAL（儒略日）、INTEGER（Unix 时间戳）。
-
 | 方案 | 优点 | 缺点 | 结论 |
 |---|---|---|---|
-| **TEXT / ISO 8601** | **人可读**；**字典序 = 时间序**（可直接用 `>=` 比较）；时区明确；JS `Date` 直接解析 | 占空间比整数略大（无所谓） | ✅ **采用** |
-| REAL / 儒略日 | 紧凑 | **完全不可读**，调试困难；需转换 | ❌ |
-| INTEGER / Unix 时间戳 | 紧凑、比较快 | 日期变成 `1798761600`，**不可读**；日期无时区概念却用时区时间戳，易混淆 | ❌ |
+| **TEXT / ISO 8601** | **人可读**；**字典序 = 时间序**；时区明确；JS `Date` 直接解析 | 占空间略大（无所谓） | ✅ **采用** |
+| REAL / 儒略日 | 紧凑 | 完全不可读，调试困难 | ❌ |
+| INTEGER / Unix 时间戳 | 紧凑、比较快 | 不可读；日期无时区概念却用时区时间戳 | ❌ |
 
-**"字典序 = 时间序"是关键优势**：`'2026-10-01' <= '2026-10-15'` 在字符串比较下**结果正确**（因为 ISO 8601 是定长的、高位在前的格式）。这让日期比较、排序、CHECK 约束都能直接用字符串运算符完成，无需转换函数。
+**「字典序 = 时间序」是关键优势**：`'2026-10-02' <= '2026-10-15'` 在字符串比较下结果正确
+（ISO 8601 定长、高位在前）。这让日期比较、排序、CHECK 约束都能直接用字符串运算符完成。
 
-**而且它同时满足"容易在 TypeScript 中处理"**：
+### 8.2 日期计算必须 UTC 安全
 
-- 日期：`"2026-10-01"` → 前端 `<input type="date">` 的 value 格式**原生就是这个格式**，无需转换
-- 时间戳：`new Date().toISOString()` 原生产出这个格式
+日期加法在 `server/src/services/dates.ts` 中实现：
 
-### 8.2 关于 `expiry_date >= purchase_date`
-
-**结论：Service 和数据库都保证（双层）。**
-
-**数据库层：CHECK 约束**
-
-```
-CHECK (
-  expiry_date IS NULL
-  OR purchase_date IS NULL
-  OR expiry_date >= purchase_date
-)
-```
-
-必须包含两个 `IS NULL` 分支，因为两个日期都可选（决策 12、13）。
-这里依赖 8.1 的"字典序 = 时间序"特性，字符串比较即正确的日期比较。
-
-**Service 层：**
-
-- 返回明确错误码 `INVALID_DATE_RANGE`（400），而不是让数据库抛约束错误
-- 处理 PATCH 的**部分更新**场景：只改 `expiry_date` 时，必须取出数据库中现有的 `purchase_date` 一起校验
-
-**为什么两者都要：**
-
-| 层 | 职责 |
-|---|---|
-| Service | **用户体验**——友好错误提示、处理部分更新、跨字段业务逻辑 |
-| 数据库 | **数据完整性**——最后防线，防止任何绕过 Service 的写入产生非法数据 |
-
-只靠 Service：一旦有 bug 或未来新增写入路径，脏数据就进库了。
-只靠数据库：用户只能看到"约束违反"这种技术性错误。
-
-**注意 `>=` 而不是 `>`**：同一天购买并过期是合法的（当天消耗品），所以允许相等。
+- 解析为 UTC 午夜，用 `setUTCDate` / `getUTCDate` 运算，输出 `YYYY-MM-DD`
+- **不使用** `new Date(year, month, day)` 这类受本地时区影响的构造
+- `isValidDateString` 拒绝格式正确但不存在的日期（如 `2026-02-30`）
 
 ---
 
-## 9. 索引设计
+## 9. 名称、别名与唯一性
 
-**原则：只为 v0.1 真实存在的查询建索引，不为"以后可能用到"建索引。**
+### 9.1 归一化规则
 
-### 9.1 必要索引
+```
+normalize(input) = input.trim().toLowerCase()
+```
 
-| 索引 | 类型 | 解决的查询 | 理由 |
-|---|---|---|---|
-| `standard_ingredient.name_normalized` | UNIQUE | 别名解析第一步：按标准名称精确查找 | 唯一约束自带索引。每次添加/搜索都走这里 |
-| `ingredient_alias.alias_normalized` | UNIQUE | 别名解析：按别名查找所属食材 | 唯一约束自带索引。**这是最高频的查询之一** |
-| `ingredient_alias.ingredient_id` | 普通 | ① 查某食材的所有别名 ② `ON DELETE CASCADE` 时定位子行 | 外键列**必须**建索引，否则级联删除要全表扫描 |
+**全项目只有一个实现**（`server/src/services/normalize.ts`）。
+创建与查询必须调用同一个函数，否则唯一性约束形同虚设。
 
-### 9.2 关于隐式索引的说明
+**v0.1 明确不做**：全角/半角转换、内部连续空格折叠、繁简转换、拼音、模糊匹配、编辑距离。
 
-前两个是 UNIQUE 约束**自动创建**的索引，不需要额外 `CREATE INDEX`。
-只有第三个 `ingredient_id` 需要显式创建。
+### 9.2 数据库强制 vs Service 强制
 
-### 9.3 明确不建的索引
+| 规则 | 强制方式 |
+|---|---|
+| 默认名称唯一 | 数据库 UNIQUE（`ingredient_definition.name_normalized`） |
+| 别名全局唯一 | 数据库 UNIQUE（`ingredient_alias.alias_normalized`） |
+| **名称与别名不跨表重名** | **Service 检查**（数据库无法跨表建 UNIQUE） |
+| 同一食材不重复声明同一单位 | 数据库 UNIQUE（`definition_id, unit`） |
+| 至少一个允许单位 | Service 检查 |
+| 库存单位属于允许单位 | Service 检查 |
+
+### 9.3 跨表唯一性（Service 的职责）
+
+**数据库有两张表各自的 UNIQUE 约束，但无法阻止跨表重名：**
+
+```
+ingredient_definition.name_normalized = '西红柿'   ← 单独看合法
+ingredient_alias.alias_normalized     = '西红柿'   ← 单独看也合法
+```
+
+规则：**一个字符串归一化后，不能同时作为任何默认名称或任何别名存在。**
+
+**由 Service 检查，不引入 SQLite Trigger**（v0.1 不值得为此增加调试成本）。
+
+**Service 必须覆盖的写入路径：**
+
+| 写入操作 | 检查内容 |
+|---|---|
+| 创建定义 | 名称是否已是某别名 |
+| 修改定义名称 | 新名称是否已是某别名、是否与其他定义重名 |
+| 创建别名 | 别名是否已是某定义名称、是否已是其他别名 |
+| 修改别名 | 同上 |
+| 别名设为默认名称 | 新名称是否与其他定义或其他别名冲突 |
+
+### 9.4 搜索 vs 精确解析
+
+| | 搜索 | 精确解析 |
+|---|---|---|
+| 实现 | `searchDefinitions()` | `resolveDefinitionByName()` |
+| 匹配 | **包含匹配**（LIKE） | **归一化精确匹配** |
+| 范围 | 默认名称 + 别名 | 默认名称优先，其次别名 |
+| 返回 | 多个定义 | 一个定义 |
+
+两者**不可混为一谈**：搜索用于食材库 UI，精确解析用于「用户选定某个名称」。
+
+---
+
+## 10. 索引设计
+
+**原则：只为当前真实存在的查询建索引。**
+
+### 10.1 现有索引
+
+| 索引 | 类型 | 解决的查询 |
+|---|---|---|
+| `ingredient_definition_name_normalized_unique` | UNIQUE | 按默认名称精确查找 |
+| `ingredient_alias_alias_normalized_unique` | UNIQUE | 按别名精确查找 |
+| `ingredient_alias_definition_id_idx` | 普通 | 查某定义的别名；级联删除定位 |
+| `ingredient_definition_unit_unique` | UNIQUE（复合） | 查 / 校验 (定义, 单位) |
+| `ingredient_definition_unit_definition_id_idx` | 普通 | 查某定义的允许单位；级联删除定位 |
+| `standard_ingredient_definition_id_idx` | 普通 | 查某定义的所有库存记录 |
+
+前两个与 `_unit_unique` 由 UNIQUE 约束自动创建；其余为显式索引。
+
+### 10.2 明确不建的索引
 
 | 不建的索引 | 原因 |
 |---|---|
-| `standard_ingredient.unit` | 10 个枚举值，选择性极低，全表扫描更快。v0.1 也没有"按单位筛选"的需求 |
-| `standard_ingredient.expiry_date` | v0.1 只在**前端高亮**即将过期食材（决策 27），列表一次全取，**不需要数据库层筛选** |
-| `standard_ingredient.quantity` | 没有任何按数量查询的需求 |
+| `standard_ingredient.unit` | 10 个枚举值，选择性极低 |
+| `standard_ingredient.expiry_date` | 列表一次全取，不在数据库层筛选 |
+| `standard_ingredient.quantity` | 没有按数量查询的需求 |
 | `standard_ingredient.purchase_date` | 同上 |
-| 全文索引（FTS） | **决策明确不做模糊匹配**，精确匹配用不上 FTS |
-| `created_at` / `updated_at` | 没有任何按时间筛选的查询 |
+| 全文索引（FTS） | 精确匹配 + 简单 LIKE 即可 |
+| `created_at` / `updated_at` | 没有按时间筛选的查询 |
 
-**v0.1 的数据规模**：家庭食材通常几十到几百条。
-在这个规模下，**全表扫描的成本可以忽略**，多余索引只会增加写入开销和维护负担。
-
-### 9.4 名称解析 vs 模糊搜索（重要区分）
-
-> **v0.1 明确区分两件事，且不提供后者。**
-
-| | 精确名称/别名解析 | 模糊搜索 |
-|---|---|---|
-| **v0.1 是否提供** | ✅ **提供** | ❌ **不提供** |
-| 行为 | 输入必须命中标准名称或别名 | 输入片段，列出所有相似结果 |
-| 示例 | `西红柿` → 番茄（id=1）<br>`番` → **未命中** | `番` → 番茄、番茄酱、番薯…… |
-| 匹配方式 | `=` 精确匹配（BINARY） | LIKE / FTS / 编辑距离 |
-| 依赖索引 | UNIQUE 索引即可 | 需 FTS 或额外索引 |
-| 对应决策 | 别名系统核心功能 | **明确排除** |
-
-**精确名称/别名解析的实现路径**（不依赖额外索引）：
-
-1. Service 先做归一化（`trim()` + `toLowerCase()`）
-2. 查标准食材名称 → 走 `name_normalized` 的 UNIQUE 索引
-3. 未命中 → 查别名 → 走 `alias_normalized` 的 UNIQUE 索引
-4. 都未命中 → 视为新食材，走创建流程
-
-**v0.1 明确不做的搜索能力：**
-
-- ❌ 模糊匹配 / LIKE 查询
-- ❌ 前缀匹配、包含匹配
-- ❌ 编辑距离 / 相似度
-- ❌ 全文索引（FTS）
-- ❌ 拼音搜索
-
-**这与 `PROJECT_SPEC.md` 第 9 节「不猜、不模糊匹配」一致。**
-
-> ⚠️ **API 参数命名提醒**：`ARCHITECTURE.md` 4.2 节写作 `?search=西红柿`。
-> 该参数**语义是精确解析，不是模糊搜索**。实现时不要把它做成 LIKE 查询。
-> 建议后续在 `ARCHITECTURE.md` 中补充说明或调整参数命名——**本阶段不修改该文档**，见文末报告。
-
----
-
-## 10. 数据库约束 vs Service 约束
-
-### 10.1 分工原则
-
-> **数据库保证"数据不可能非法"，Service 保证"业务规则正确"和"错误信息友好"。**
-
-### 10.2 数据库必须保证的
-
-| 约束 | 实现方式 | 对应决策 |
-|---|---|---|
-| 标准食材名称唯一 | UNIQUE on `name_normalized` | 4 |
-| 别名全局唯一 | UNIQUE on `alias_normalized` | 3、5 |
-| 外键完整性 | FK `ingredient_id` | — |
-| 级联删除别名 | `ON DELETE CASCADE` | 6 |
-| 不允许负库存 | CHECK `quantity >= 0` | 9 |
-| 单位必须是枚举值 | CHECK `unit IN (...)` | 11 |
-| 日期关系 | CHECK `expiry_date >= purchase_date`（含 NULL 分支） | 14 |
-| 必填字段非空 | NOT NULL | — |
-| 类型正确 | `STRICT` 表（见 10.5） | — |
-
-**这些是"无论谁怎么写数据库都不可能违反"的底线。**
-
-### 10.3 Service 必须保证的
-
-| 职责 | 为什么不能放数据库 |
-|---|---|
-| **名称归一化**（去首尾空格、大小写归一化） | 需要完整 Unicode 能力，SQLite 的 NOCASE 只处理 ASCII |
-| **别名解析**（输入 → 标准食材） | 业务逻辑，涉及两步查询和优先级 |
-| **跨表重名检查**（6.5 节的漏洞） | 数据库无法跨表建 UNIQUE 约束 |
-| **库存是否足够** | 需要先读再判断，业务规则 |
-| **消耗事务**（读取→校验→扣减） | 原子性由 Service 控制事务边界 |
-| **扣减结果的舍入与钳制** | 浮点误差处理（7.6 节措施①②） |
-| **日期业务规则**（部分更新时的跨字段校验） | 需要读取现有值配合 PATCH 语义 |
-| **单位业务规则**（不允许跨单位消耗） | 业务规则，涉及操作语义 |
-| **友好错误码** | 把约束违反翻译成 `ALIAS_CONFLICT` 等 |
-| **"已存在则提示修改"** | 决策 11，业务交互逻辑 |
-
-### 10.4 边界判断标准
-
-遇到"这条规则放哪"时，用三个问题判断：
-
-1. **违反后数据会不一致吗？** → 数据库
-2. **需要读取其他数据才能判断吗？** → Service（除非能用 CHECK 表达）
-3. **错误信息需要面向用户吗？** → Service 必须有一份，数据库是兜底
-
-**典型例子：`quantity >= 0`**
-
-- 数据库 CHECK 保证**永远不可能存负数**（即使代码有 bug）
-- Service 保证**提前返回 `INSUFFICIENT_STOCK`**（友好提示）
-
-两者**不是重复，是配合**：数据库防"写坏"，Service 防"体验差"。
-
-### 10.5 关于 `STRICT` 表
-
-**建议两张表都使用 `STRICT` 表**（SQLite 3.37.0+，2021-11-27 起支持）。
-
-来自[官方文档](https://www.sqlite.org/stricttables.html)：
-
-> The STRICT keyword causes the following differences: Every column definition must specify a datatype... Content inserted into the column with a datatype other than ANY must be either a NULL or the type specified... If the value cannot be losslessly converted in the specified datatype, then an SQLITE_CONSTRAINT_DATATYPE error is raised.
-
-**为什么值得用：**
-
-SQLite 默认是**动态类型**——任何列都能存任何类型的数据。
-这意味着 `quantity` 列**理论上可以存入字符串 `"abc"`**，而 `CHECK (quantity >= 0)` 对非数值的比较行为会很微妙。
-
-启用 `STRICT` 后：
-
-- `quantity` 列只能存 REAL
-- `name` 列只能存 TEXT
-- **类型错误直接报错**，而不是悄悄存进去
-
-**代价**：
-
-- 要求 SQLite ≥ 3.37.0（2021 年发布，现代环境都有）
-- **Drizzle 是否支持 `STRICT` 需要实现阶段验证**（见第 12 节）
-
-**如果 Drizzle 不支持**，退路是不用 STRICT，改用「CHECK 约束 + 依赖 Drizzle 的类型安全 + NotNull」。
-这仍然符合第 10.2 节的要求。**STRICT 是增强，不是必需。**
-
-### 10.6 已确认决策：`STRICT` 作为实现阶段验证项
-
-> **`STRICT` 表的最终定位（已确认）：**
->
-> - 作为**实现阶段的验证项**，不是设计的硬性前提
-> - **Drizzle 支持良好 → 使用 STRICT**
-> - **Drizzle 支持不佳 → 不使用 STRICT**，退化为 CHECK + 类型层保证
-> - **两种结果都不影响本设计的整体结构**：表、字段、UNIQUE、CHECK、索引、外键全部保持不变
-
-这一点很重要：**STRICT 的有无不改变任何表结构定义**，它只是同一声明末尾的一个关键字。
-因此实现阶段发现 Drizzle 不支持时，**不需要回头修改设计文档**。
-
-**不使用 STRICT 时的补偿措施**（实现阶段需确保）：
-
-1. 依赖 Drizzle 的 `integer`/`real`/`text` 类型声明做静态类型保证
-2. 保留全部 CHECK 约束（第 5.5 节）
-3. Service 层在写入前校验数值类型（防止 `NaN`/`Infinity`/字符串被写入）
-
-> ⚠️ 不使用 STRICT 时，SQLite 的动态类型意味着 `quantity` 列仍**理论上可存入非数值**。
-> CHECK 约束的兜底作用和 Service 层的类型校验因此更重要。
+**当前数据规模**：家庭食材通常几十到几百条，全表扫描成本可忽略。
 
 ---
 
 ## 11. 示例数据
 
-### 11.1 `standard_ingredient`
+### 11.1 `ingredient_definition`
 
-| id | name | name_normalized | quantity | unit | purchase_date | expiry_date | note |
-|---|---|---|---|---|---|---|---|
-| 1 | 番茄 | 番茄 | 3 | 个 | 2026-10-01 | 2026-10-08 | 做番茄炒蛋用 |
-| 2 | 鸡蛋 | 鸡蛋 | 6 | 个 | 2026-10-01 | 2026-10-20 | NULL |
-| 3 | 面粉 | 面粉 | 1.5 | 千克 | 2026-09-20 | NULL | NULL |
-| 4 | 牛奶 | 牛奶 | 0 | 毫升 | 2026-09-25 | 2026-10-02 | 喝完了，待补货 |
-| 5 | Tomato | tomato | 2 | 个 | NULL | NULL | NULL |
-
-**说明：**
-
-- **id=1、2**：正常数据
-- **id=3**：`expiry_date` 为 NULL（决策 13：过期日期可选）
-- **id=4**：数量为 0 但**保留记录**（`ARCHITECTURE.md` 决策：扣减到 0 保留记录），`purchase_date` 单独存在
-- **id=5**：演示**大小写归一化**——`name` 保留用户输入 `Tomato`，`name_normalized` 存 `tomato`
+| id | name | name_normalized | estimated_shelf_life_days |
+|---|---|---|---|
+| 1 | 番茄 | 番茄 | 5 |
+| 2 | 土豆 | 土豆 | 30 |
+| 3 | 盐 | 盐 | NULL |
 
 ### 11.2 `ingredient_alias`
 
-| id | ingredient_id | alias | alias_normalized | created_at |
-|---|---|---|---|---|
-| 1 | 1 | 西红柿 | 西红柿 | 2026-10-01T10:00:00.000Z |
-| 2 | 1 | 番茄子 | 番茄子 | 2026-10-01T10:00:00.000Z |
-| 3 | 2 | 鸡子 | 鸡子 | 2026-10-01T10:00:00.000Z |
-| 4 | 2 | 蛋 | 蛋 | 2026-10-01T10:00:00.000Z |
-
-**解析演示：**
-
-| 用户输入 | 归一化 | 解析结果 | 命中路径 |
+| id | definition_id | alias | alias_normalized |
 |---|---|---|---|
-| `西红柿` | `西红柿` | 番茄（id=1） | 别名表 |
-| ` 西红柿 ` | `西红柿` | 番茄（id=1） | 别名表（去首尾空格） |
-| `番茄` | `番茄` | 番茄（id=1） | 标准名称 |
-| `Tomato` | `tomato` | Tomato（id=5） | 标准名称 |
-| `tomato` | `tomato` | Tomato（id=5） | 标准名称（大小写归一化） |
-| `土豆` | `土豆` | **未命中** | 走新建流程 |
+| 1 | 1 | 西红柿 | 西红柿 |
+| 2 | 1 | 番茄子 | 番茄子 |
+| 3 | 2 | 马铃薯 | 马铃薯 |
 
-**约束演示（会被数据库拒绝）：**
+### 11.3 `ingredient_definition_unit`
 
-| 操作 | 结果 |
-|---|---|
-| 再插入一个 `alias_normalized = '西红柿'` 的别名（挂在 id=2 下） | ❌ UNIQUE 违反 → `ALIAS_CONFLICT` |
-| 把 id=5 的 `quantity` 改成 `-1` | ❌ CHECK 违反 |
-| 把 id=1 的 `unit` 改成 `斤` | ❌ CHECK 违反（不在 10 个枚举内） |
-| 给 id=4 设置 `expiry_date = '2026-09-01'`（早于 `purchase_date`） | ❌ CHECK 违反 |
-
-**跨表重名（数据库不拦，Service 拦）：**
-
-| 操作 | 数据库 | Service |
+| id | definition_id | unit |
 |---|---|---|
-| 插入标准食材 `name_normalized = '西红柿'` | ✅ 允许 | ❌ 应返回 `DUPLICATE_NAME` |
+| 1 | 1 | 个 |
+| 2 | 1 | 千克 |
+| 3 | 2 | 个 |
+| 4 | 2 | 袋 |
+| 5 | 3 | 袋 |
+
+### 11.4 `standard_ingredient`
+
+| id | definition_id | quantity | unit | purchase_date | production_date | expiry_date | expiry_date_source | storage_method |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 2 | 3 | 个 | 2026-10-02 | NULL | 2026-11-01 | estimated | 常温 |
+| 2 | 2 | 1 | 袋 | 2026-10-02 | NULL | 2026-11-01 | estimated | 冷藏 |
+| 3 | 1 | 500 | 千克 | 2026-09-28 | 2026-09-20 | 2026-10-20 | manual | 冷藏 |
+| 4 | 3 | 0 | 袋 | 2026-08-01 | NULL | NULL | NULL | 常温 |
+
+**说明：**
+
+- **定义 2（土豆）有 2 条库存记录**（3 个 / 1 袋）—— 这是 1:N 模型的体现，**不是重复数据**
+- **记录 3**：用户手动填写了到期日期 → `manual`
+- **记录 4**：数量为 0，记录保留，但当前库存列表不显示
 
 ---
 
-## 12. v0.1 明确不包含的表
-
-**以下表在 v0.1 中一律不创建：**
+## 12. 当前不包含的表
 
 | 不创建的表 | 原因 |
 |---|---|
-| `consumption_history` / 消耗记录 | 决策 7、16 明确不记录 |
-| `recipe` / 菜谱 | 范围外，后续阶段 |
-| `recipe_ingredient` / 菜谱食材关系 | 范围外 |
-| `recommendation` / 推荐 | 范围外 |
-| `shopping_list` / 采购清单 | 范围外 |
-| `unit` / 单位表 | 10 个固定枚举，用 CHECK 约束即可（见 5.2） |
-| `ingredient_merge` / 标准食材合并 | 决策 17 明确不做 |
-| `user` / 用户表 | 单用户本地应用 |
-| `category` / 食材分类 | 需求中未提出 |
+| `consumption_history` | 决策 12：不记录消耗历史 |
+| `recipe` / `recipe_ingredient` | 范围外，后续阶段 |
+| `recommendation` | 范围外 |
+| `shopping_list` | 范围外 |
+| `unit`（单位表） | 10 个固定枚举，用 CHECK 约束即可 |
+| `ingredient_merge` | 决策 22：不做定义合并 |
+| `user` | 单用户本地应用 |
+| `category` | 需求中未提出 |
 
-**此外，v0.1 也不创建以下数据库对象：**
-
-| 不创建的对象 | 原因 |
-|---|---|
-| **SQLite Trigger** | 跨表重名检查由 Service 负责（见 6.6），**明确不引入 Trigger** |
-| FTS 虚拟表 | 不做模糊搜索（见 9.4） |
-| 视图（VIEW） | 无实际需要 |
-| 存储过程 | SQLite 不支持，也不需要 |
-
-**v0.1 最终只有两张表：`standard_ingredient`、`ingredient_alias`。**
+**此外也不创建**：SQLite Trigger（跨表唯一性由 Service 负责）、FTS 虚拟表、视图。
 
 ---
 
-## 13. 后续实现时需要注意的事项
+## 13. 实现时需要注意的事项
 
 ### 13.1 ⚠️ 必须启用外键约束
 
 **SQLite 的 `PRAGMA foreign_keys` 默认是 OFF。**
 
-如果不显式开启：
+不开启则 `ON DELETE CASCADE` 与 `RESTRICT` **全部不会生效**。
 
-- `ON DELETE CASCADE` **不会生效** → 删除食材后残留孤儿别名
-- 外键约束完全不检查
-
-**必须在每个数据库连接建立后立即执行：**
+`server/src/db/index.ts` 在每个连接建立后立即执行：
 
 ```
+PRAGMA foreign_keys = ON
+```
+
+### 13.2 ⚠️ 重建表时必须临时关闭外键
+
+做「建新表 → 搬数据 → 删旧表 → 重命名」这类迁移时，
+`DROP TABLE` 会触发子表的 `ON DELETE CASCADE`，**把关联数据全部删掉**。
+
+因此迁移期间必须：
+
+```
+PRAGMA foreign_keys = OFF;
+  ... 重建 ...
 PRAGMA foreign_keys = ON;
 ```
 
-这是本设计**最容易踩的坑**——不会报错，只会静默产生脏数据。
+> 这个问题在 `0002_definition_id_autoincrement` 迁移中实际发生过，
+> 导致别名与允许单位被级联删除（后被测试发现并修复）。
 
-### 13.2 需要验证的 Drizzle 能力
+### 13.3 迁移中沿用原 ID
 
-实现阶段必须先确认以下三点，**不要假设它们可用**：
+做「一张表拆成两张」的迁移时，显式插入原 `id`，
+让新表的主键值等于旧表的主键值，这样关联表的外键值**无需重新映射**。
 
-| 待验证 | 说明 | 若不支持的退路 |
-|---|---|---|
-| Drizzle 是否支持 `STRICT` 表 | 见 10.5 | 退化为 CHECK + 类型层保证 |
-| Drizzle 能否正确表达 `PRAGMA foreign_keys` | 连接初始化 | 手动执行 PRAGMA |
-| Drizzle 迁移能否创建 CHECK 约束 | 5.5 节的三个 CHECK | 手写 SQL 迁移 |
+### 13.4 STRICT 表未使用
 
-### 13.3 归一化算法（已确认）
+`DATABASE_DESIGN.md` 早期版本曾计划使用 SQLite `STRICT` 表。
 
-`name_normalized` / `alias_normalized` 的生成必须**严格一致**，否则唯一性约束形同虚设。
+**实测确认 Drizzle 不支持**（`drizzle-orm` / `drizzle-kit` 无该选项），
+因此退化为「CHECK 约束 + 类型层保证 + Service 写入前类型校验」。
 
-> **v0.1 归一化规则（已确认，固定为）：**
->
-> ```
-> normalize(input) = input.trim().toLowerCase()
-> ```
->
-> - **首尾空格**：`trim()`
-> - **大小写**：`toLowerCase()`（**不是** `toLocaleLowerCase()`）
-> - **就这两步，不做其他处理**
+这不影响表结构设计。
 
-**实现要求：**
+### 13.5 日期计算使用 UTC
 
-- 写一个**单一函数**统一处理，**禁止各处自行实现**
-- 所有数据库的**写入**和**读取查询**都必须经过同一函数
-- 种子数据也必须经过该函数（见 13.6）
+见 8.2 节。避免本地时区导致的跨日错误。
 
-> ⚠️ **关键风险**：如果创建时用 `toLowerCase()`、查询时用 `toLocaleLowerCase()`，
-> 在特定字符（如土耳其语的 `I`/`ı`）上结果不一致，会**静默导致"刚创建的食材查不到"**。
-> 必须严格遵守"统一使用 `toLowerCase()`"。
+### 13.6 迁移前备份
 
-**v0.1 明确不做的归一化处理（已确认）：**
-
-| 不处理 | 说明 |
-|---|---|
-| ❌ 全角 / 半角转换 | `Ｔｏｍａｔｏ` 与 `Tomato` 视为**不同**名称 |
-| ❌ 内部连续空格折叠 | `番  茄` 与 `番 茄`、`番茄` 视为**不同**名称 |
-| ❌ 繁简转换 | `番茄` 与 `番茄` 的繁体形式视为不同 |
-| ❌ 拼音归一化 | 不做 |
-| ❌ 模糊匹配 | 不做 |
-| ❌ 编辑距离 / 相似度 | 不做 |
-
-> 这些属于 `PROJECT_SPEC.md` 第 9 节「不猜、不模糊匹配」的范围。
-> 若将来确有需要，再作为**明确的新需求**引入，而不是现在悄悄加上。
-
-### 13.4 舍入与钳制
-
-见 7.6 节。**写入前舍入、扣减后钳制，必须在 Service 层统一实现，不能散落各处。**
-
-### 13.5 日期处理
-
-- 日期字符串**不要**用 `new Date()` 的本地时区格式化，避免时区偏移导致日期差一天
-- 建议统一使用 `YYYY-MM-DD` 字符串直接传递，只在必要时转换
-- `created_at` / `updated_at` 用 UTC（`toISOString()`）
-
-### 13.6 种子数据（已确认插入时机）
-
-`ARCHITECTURE.md` 3.5 节要求**10～20 个常见别名**的内置种子数据。
-
-> **插入时机（已确认）：首次数据库初始化时插入。**
-
-**实现要求：**
-
-- 种子数据**必须经过同一个 `normalize` 函数**处理（`trim()` + `toLowerCase()`），**不能直接写死归一化值**
-- 种子别名之间不能冲突（`alias_normalized` 全局唯一）
-- 种子别名不能与标准食材名称冲突（见 6.5、6.6 节的跨表检查）
-- 首次初始化需保证**幂等**：重复执行不应产生重复数据或报错
-
-> ⚠️ **注意区分**：种子数据只在**首次初始化**时插入，
-> **不是**每次启动都插入，也**不是**放进每次迁移都重跑的位置。
-> 实现时需明确"已初始化"的判定方式（例如检查表是否为空）。
-
-**规模控制**：10～20 个常见别名即可，**不扩大范围**。
-
-### 13.7 事务
-
-消耗操作必须在一个事务内完成（`ARCHITECTURE.md` 第 6 节）。
-数据库设计层面已通过 CHECK 保证不会出现负库存，但**读取-判断-写入**的原子性仍需 Service 用事务保证。
+结构性迁移不可逆，建议迁移前备份 `server/data/homechef.db`。
 
 ---
 
-## 14. 设计决策汇总
+## 14. 数据库约束 vs Service 约束
 
-| 项目 | 决定 |
+### 14.1 分工原则
+
+> **数据库保证「数据不可能非法」，Service 保证「业务规则正确」和「错误信息友好」。**
+
+### 14.2 数据库必须保证的
+
+| 约束 | 实现方式 |
 |---|---|
-| 表数量 | 2 张 |
-| 主键 | `INTEGER PRIMARY KEY`（不用 AUTOINCREMENT） |
-| 外键 | `ingredient_alias.ingredient_id`，`ON DELETE CASCADE` |
-| 数量类型 | **REAL** + Service 层统一舍入/钳制 |
-| 日期类型 | **TEXT**，ISO 8601（`YYYY-MM-DD`） |
-| 单位 | TEXT + CHECK 约束限定 10 个枚举值 |
-| 名称唯一性 | UNIQUE on `name_normalized` |
-| 别名唯一性 | UNIQUE on `alias_normalized`（**全局**，非复合） |
-| 名称匹配 | 显式 `*_normalized` 列，**不用 NOCASE** |
-| **归一化规则** | **`trim()` + `toLowerCase()`**，单一函数统一实现 |
-| 归一化不做 | 全角半角、内部空格、繁简、拼音、模糊、编辑距离 |
-| 跨表重名 | **Service 检查，不引入 Trigger** |
-| 精确解析 vs 模糊搜索 | **只做精确解析，不提供模糊搜索** |
-| 种子数据 | **首次数据库初始化时插入**，经过 normalize |
-| 索引 | 2 个 UNIQUE（隐式）+ 1 个 `ingredient_id`（显式） |
-| 类型强化 | `STRICT` 表列为**实现阶段验证项**，支持则用，不支持则不用 |
-| 外键启用 | **必须** `PRAGMA foreign_keys = ON` |
+| 定义名称唯一 | UNIQUE on `ingredient_definition.name_normalized` |
+| 别名全局唯一 | UNIQUE on `ingredient_alias.alias_normalized` |
+| 同一食材不重复声明同一单位 | UNIQUE on `(definition_id, unit)` |
+| 外键完整性 | FK（含 CASCADE / RESTRICT） |
+| 删除定义时清理别名与单位 | `ON DELETE CASCADE` |
+| 禁止级联删除库存 | `ON DELETE RESTRICT` |
+| 不允许负库存 | CHECK `quantity >= 0` |
+| 单位 / 储存方式必须是枚举值 | CHECK |
+| 到期日期与来源成对一致 | CHECK |
+| 生产日期不晚于入库日期 | CHECK |
+| manual 到期日期不早于入库日期 | CHECK |
 
----
+### 14.3 Service 必须保证的
 
-## 15. 已确认决策与遗留验证项
-
-### 15.1 已确认决策（不再需要确认）
-
-| # | 事项 | 最终决定 | 位置 |
-|---|---|---|---|
-| 1 | 数量存储 | **SQLite REAL**，Service 层统一舍入与扣减后钳制 | 7.6 |
-| 2 | 跨表重名 | **由 Service 检查，不引入 SQLite Trigger** | 6.6 |
-| 3 | `STRICT` 表 | **实现阶段验证项**：Drizzle 支持良好则用，否则不用，不影响整体设计 | 10.5、10.6 |
-| 4 | 归一化规则 | **`trim()` + `toLowerCase()`**，单一函数统一实现 | 13.3 |
-| 5 | 归一化不做 | 全角半角、内部连续空格、繁简转换、拼音、模糊匹配、编辑距离 | 13.3 |
-| 6 | 精确解析 vs 模糊搜索 | **明确区分，v0.1 只做精确解析，不提供模糊搜索** | 9.4 |
-| 7 | 种子别名 | **首次数据库初始化时插入**，统一经过 `normalize` 函数 | 13.6 |
-
-### 15.2 遗留验证项（实现阶段处理）
-
-以下**不是设计问题**，而是实现阶段需要实测确认的技术细节：
-
-| # | 验证项 | 若不满足的退路 |
-|---|---|---|
-| 1 | Drizzle 是否支持 `STRICT` 表 | 不使用 STRICT，靠 CHECK + 类型层保证（10.6） |
-| 2 | Drizzle 能否正确表达 `PRAGMA foreign_keys` | 连接初始化时手动执行 PRAGMA |
-| 3 | Drizzle 迁移能否创建 CHECK 约束 | 手写 SQL 迁移 |
-
-> 这三项**都不影响本文档的表结构设计**。无论结果如何，表、字段、UNIQUE、CHECK、索引、外键均保持不变。
-
-### 15.3 已知的文档间表述差异（未修改其他文档）
-
-| 事项 | 说明 |
+| 职责 | 为什么不能放数据库 |
 |---|---|
-| `ARCHITECTURE.md` 4.2 节的 `?search=` 参数 | 该参数**语义是精确解析，不是模糊搜索**（见 9.4）。建议后续补充说明或调整命名 |
-| `ARCHITECTURE.md` 未提示 `PRAGMA foreign_keys` 默认 OFF | 见 13.1。这是最容易踩的坑，建议后续补充 |
+| 名称归一化 | 需要完整 Unicode 能力 |
+| 名称/别名跨表唯一 | 数据库无法跨表建 UNIQUE |
+| 搜索与精确解析 | 业务逻辑 |
+| 默认名称切换（含别名升降级） | 需要事务内的多步操作 |
+| 至少一个允许单位 | 跨行约束，CHECK 无法表达 |
+| 库存单位属于允许单位 | 跨表校验 |
+| 到期日期估算与来源判定 | 业务规则 |
+| 库存是否足够 | 需要先读再判断 |
+| 消耗事务 | 原子性由 Service 控制事务边界 |
+| 删除保护（HAS_STOCK / UNIT_IN_USE） | 需要先查询引用情况 |
+| 友好错误码 | 把约束违反翻译成可读消息 |
 
-> 按当前阶段的要求，**这两处均未修改** `ARCHITECTURE.md`，仅在此记录。
+### 14.4 取舍说明
+
+**「至少一个允许单位」目前由 Service 保证，数据库层无对应约束。**
+若将来需要数据库级保障，可考虑 Trigger，但 v0.1 认为不值得。
+
+**跨表重名同样由 Service 保证**，理由同上。
+
+这两条是当前设计中**明确的取舍**，不是遗漏。

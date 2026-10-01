@@ -307,3 +307,374 @@ button.danger:hover:not(:disabled) {
     padding: 16px 12px;
   }
 }
+
+/* ============================================================
+ * Definition 1:N Inventory 模型的新样式
+ * ============================================================ */
+
+/* ---- 顶部导航 ---- */
+
+.page-header {
+  margin-bottom: 20px;
+}
+
+.nav {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.nav-item {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.nav-item.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* ---- 搜索框 ---- */
+
+.search-input {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  background: #fff;
+}
+
+/* ---- 库存分组 ---- */
+
+.group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.group-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.group-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #f7f7f7;
+}
+
+.group-name {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.group-count {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.record-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.record-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-top: 1px solid #eee;
+}
+
+.record-item:first-child {
+  border-top: none;
+}
+
+.record-main {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.record-quantity {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.record-meta {
+  margin: 2px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.record-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.overdue {
+  color: var(--danger);
+}
+
+.overdue-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.72rem;
+}
+
+/* ---- 食材库列表 ---- */
+
+.definition-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.definition-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.definition-main {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.definition-name {
+  margin: 0 0 6px;
+  font-size: 1.02rem;
+}
+
+.definition-meta {
+  margin: 2px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.definition-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---- 表单辅助 ---- */
+
+.field-block {
+  margin-bottom: 12px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.9rem;
+}
+
+.hint {
+  margin: 2px 0 10px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.alias-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.alias-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.tag-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f4f4f4;
+  font-size: 0.85rem;
+}
+
+.tag-remove {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.tag-remove:hover {
+  color: var(--danger);
+}
+
+.unit-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.unit-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.unit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: #f0f7f2;
+  font-size: 0.88rem;
+}
+
+.add-unit-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.add-unit-row button {
+  padding: 3px 10px;
+  font-size: 0.85rem;
+}
+
+/* ---- 错误提示 ---- */
+
+.action-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e6b8b6;
+  border-radius: 6px;
+  background: #fdf0f0;
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.action-error p {
+  margin: 0;
+}
+
+/* ---- 编辑器 ---- */
+
+.modal.wide {
+  max-width: 560px;
+}
+
+.editor-section {
+  padding: 12px 0;
+  border-top: 1px solid #eee;
+}
+
+.editor-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.98rem;
+}
+
+.alias-manage-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.alias-manage-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.alias-name {
+  font-size: 0.92rem;
+}
+
+.alias-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.alias-actions button {
+  padding: 3px 10px;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 520px) {
+  .record-item,
+  .definition-item {
+    flex-direction: column;
+  }
+
+  .record-actions,
+  .definition-actions {
+    width: 100%;
+  }
+
+  .record-actions button,
+  .definition-actions button {
+    flex: 1;
+  }
+}

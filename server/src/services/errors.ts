@@ -8,7 +8,7 @@
  * 设计原则（本阶段）：简单、可区分、不提前做复杂错误体系。
  */
 
-/** 业务错误码（对应 DATABASE_DESIGN.md 第 9.4 节） */
+/** 业务错误码 */
 export type ServiceErrorCode =
   | 'VALIDATION_ERROR'
   | 'INVALID_DATE_RANGE'
@@ -16,6 +16,10 @@ export type ServiceErrorCode =
   | 'INGREDIENT_EXISTS'
   | 'DUPLICATE_NAME'
   | 'INSUFFICIENT_STOCK'
+  | 'DEFINITION_NOT_FOUND'
+  | 'HAS_STOCK'
+  | 'UNIT_IN_USE'
+  | 'UNIT_NOT_ALLOWED'
 
 /**
  * Service 业务错误。
@@ -66,4 +70,33 @@ export function insufficientStockError(message: string): ServiceError {
  */
 export function duplicateNameError(message: string): ServiceError {
   return new ServiceError('DUPLICATE_NAME', message)
+}
+
+/** 食材定义不存在 */
+export function definitionNotFoundError(message: string): ServiceError {
+  return new ServiceError('DEFINITION_NOT_FOUND', message)
+}
+
+/**
+ * 定义仍被库存引用，无法删除（HTTP 409）。
+ *
+ * 规则：只要 definition 下还有**任何**库存记录，就拒绝删除。
+ * 绝不级联删除库存。
+ */
+export function hasStockError(message: string): ServiceError {
+  return new ServiceError('HAS_STOCK', message)
+}
+
+/**
+ * 允许单位正被库存使用，无法移除（HTTP 409）。
+ */
+export function unitInUseError(message: string): ServiceError {
+  return new ServiceError('UNIT_IN_USE', message)
+}
+
+/**
+ * 库存单位不在该 definition 的允许单位内（HTTP 400）。
+ */
+export function unitNotAllowedError(message: string): ServiceError {
+  return new ServiceError('UNIT_NOT_ALLOWED', message)
 }

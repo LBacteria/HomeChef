@@ -1,7 +1,7 @@
 import Fastify from 'fastify'
 
 import { registerErrorHandler } from './routes/errorHandler.js'
-import { registerAliasRoutes } from './routes/aliases.js'
+import { registerDefinitionRoutes } from './routes/definitions.js'
 import { registerIngredientRoutes } from './routes/ingredients.js'
 
 // 后端应用入口。
@@ -39,8 +39,9 @@ app.get('/health', async () => {
 })
 
 // 业务路由
+// 注意：旧版 aliases route 已删除，别名 API 并入 definitions
+registerDefinitionRoutes(app)
 registerIngredientRoutes(app)
-registerAliasRoutes(app)
 
 // 默认端口 3001（3000 已被本机其他程序占用）。
 // 仍可用 PORT 环境变量覆盖（测试等场景）。

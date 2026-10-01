@@ -1,0 +1,348 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "b7e3a1c4-5d92-4f18-9a06-2c8e7f1b3d45",
+  "prevId": "9c9acb5a-130f-4864-881c-fe1d201efdba",
+  "tables": {
+    "ingredient_definition": {
+      "name": "ingredient_definition",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name_normalized": {
+          "name": "name_normalized",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "estimated_shelf_life_days": {
+          "name": "estimated_shelf_life_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "ingredient_definition_name_normalized_unique": {
+          "name": "ingredient_definition_name_normalized_unique",
+          "columns": ["name_normalized"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "shelf_life_non_negative": {
+          "name": "shelf_life_non_negative",
+          "value": "\"ingredient_definition\".\"estimated_shelf_life_days\" is null or \"ingredient_definition\".\"estimated_shelf_life_days\" >= 0"
+        }
+      }
+    },
+    "ingredient_alias": {
+      "name": "ingredient_alias",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "definition_id": {
+          "name": "definition_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "alias": {
+          "name": "alias",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "alias_normalized": {
+          "name": "alias_normalized",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "ingredient_alias_alias_normalized_unique": {
+          "name": "ingredient_alias_alias_normalized_unique",
+          "columns": ["alias_normalized"],
+          "isUnique": true
+        },
+        "ingredient_alias_definition_id_idx": {
+          "name": "ingredient_alias_definition_id_idx",
+          "columns": ["definition_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "ingredient_alias_definition_id_ingredient_definition_id_fk": {
+          "name": "ingredient_alias_definition_id_ingredient_definition_id_fk",
+          "tableFrom": "ingredient_alias",
+          "tableTo": "ingredient_definition",
+          "columnsFrom": ["definition_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "ingredient_definition_unit": {
+      "name": "ingredient_definition_unit",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "definition_id": {
+          "name": "definition_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit": {
+          "name": "unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "ingredient_definition_unit_unique": {
+          "name": "ingredient_definition_unit_unique",
+          "columns": ["definition_id", "unit"],
+          "isUnique": true
+        },
+        "ingredient_definition_unit_definition_id_idx": {
+          "name": "ingredient_definition_unit_definition_id_idx",
+          "columns": ["definition_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "ingredient_definition_unit_definition_id_ingredient_definition_id_fk": {
+          "name": "ingredient_definition_unit_definition_id_ingredient_definition_id_fk",
+          "tableFrom": "ingredient_definition_unit",
+          "tableTo": "ingredient_definition",
+          "columnsFrom": ["definition_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "definition_unit_in_enum": {
+          "name": "definition_unit_in_enum",
+          "value": "\"ingredient_definition_unit\".\"unit\" in ('个', '克', '千克', '毫升', '升', '包', '袋', '瓶', '盒', '罐')"
+        }
+      }
+    },
+    "standard_ingredient": {
+      "name": "standard_ingredient",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "definition_id": {
+          "name": "definition_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "unit": {
+          "name": "unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "purchase_date": {
+          "name": "purchase_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "production_date": {
+          "name": "production_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expiry_date": {
+          "name": "expiry_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expiry_date_source": {
+          "name": "expiry_date_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "storage_method": {
+          "name": "storage_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "常温"
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "standard_ingredient_definition_id_idx": {
+          "name": "standard_ingredient_definition_id_idx",
+          "columns": ["definition_id"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "standard_ingredient_definition_id_ingredient_definition_id_fk": {
+          "name": "standard_ingredient_definition_id_ingredient_definition_id_fk",
+          "tableFrom": "standard_ingredient",
+          "tableTo": "ingredient_definition",
+          "columnsFrom": ["definition_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "quantity_non_negative": {
+          "name": "quantity_non_negative",
+          "value": "\"standard_ingredient\".\"quantity\" >= 0"
+        },
+        "inventory_unit_in_enum": {
+          "name": "inventory_unit_in_enum",
+          "value": "\"standard_ingredient\".\"unit\" in ('个', '克', '千克', '毫升', '升', '包', '袋', '瓶', '盒', '罐')"
+        },
+        "storage_method_in_enum": {
+          "name": "storage_method_in_enum",
+          "value": "\"standard_ingredient\".\"storage_method\" in ('常温', '冷藏', '冷冻')"
+        },
+        "expiry_source_pairing": {
+          "name": "expiry_source_pairing",
+          "value": "case\n        when \"standard_ingredient\".\"expiry_date\" is null\n          then case when \"standard_ingredient\".\"expiry_date_source\" is null then 1 else 0 end\n        else case\n          when \"standard_ingredient\".\"expiry_date_source\" is null then 0\n          when \"standard_ingredient\".\"expiry_date_source\" in ('estimated', 'manual') then 1\n          else 0\n        end\n      end"
+        },
+        "production_not_after_purchase": {
+          "name": "production_not_after_purchase",
+          "value": "\"standard_ingredient\".\"production_date\" is null or \"standard_ingredient\".\"production_date\" <= \"standard_ingredient\".\"purchase_date\""
+        },
+        "manual_expiry_not_before_purchase": {
+          "name": "manual_expiry_not_before_purchase",
+          "value": "case\n        when \"standard_ingredient\".\"expiry_date\" is null then 1\n        when \"standard_ingredient\".\"expiry_date_source\" = 'estimated' then 1\n        when \"standard_ingredient\".\"expiry_date\" >= \"standard_ingredient\".\"purchase_date\" then 1\n        else 0\n      end"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

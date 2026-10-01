@@ -1,39 +1,37 @@
 import { useState } from 'react'
 
+import { ApiError, type InventoryRecord } from '../types/api'
 import { formatQuantity, formatQuantityWithUnit } from '../format'
-import { ApiError, type Ingredient } from '../types/ingredient'
 
 /**
- * 消耗食材对话框。
+ * 消耗库存对话框。
  *
- * 提交 POST /api/ingredients/:id/consume。
- *
- * ⚠️ 前端**不修改库存**，只把 amount 发给后端，以后端返回的结果为准。
+ * ⚠️ 针对**具体库存记录**（inventory.id），不跨记录寻找。
+ * ⚠️ 前端不修改库存，只把 amount 发给后端，以后端返回为准。
  */
 
 interface Props {
-  ingredient: Ingredient
+  record: InventoryRecord
+  definitionName: string
   onSubmit: (amount: number) => Promise<void>
   onCancel: () => void
 }
 
-export default function ConsumeDialog({ ingredient, onSubmit, onCancel }: Props) {
+export default function ConsumeDialog({ record, definitionName, onSubmit, onCancel }: Props) {
   const [amount, setAmount] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const parsedAmount = Number(amount)
-  const amountIsValid = amount.trim().length > 0 && Number.isFinite(parsedAmount) && parsedAmount > 0
+  const parsed = Number(amount)
+  const valid = amount.trim().length > 0 && Number.isFinite(parsed) && parsed > 0
 
-  /** 预览消耗后的剩余量（仅显示用，不改变任何数据） */
-  const previewRemaining = amountIsValid
-    ? formatQuantity(ingredient.quantity - parsedAmount)
-    : null
+  /** 预览剩余量（仅显示，不改变任何数据） */
+  const remaining = valid ? formatQuantity(record.quantity - parsed) : null
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
 
-    if (!amountIsValid) {
+    if (!valid) {
       setError('消耗数量必须是大于 0 的数字')
       return
     }
@@ -42,11 +40,11 @@ export default function ConsumeDialog({ ingredient, onSubmit, onCancel }: Props)
     setError(null)
 
     try {
-      await onSubmit(parsedAmount)
+      await onSubmit(parsed)
     } catch (err) {
-      // 库存不足：给出明确提示（PRD 第 12 条）
       if (err instanceof ApiError && err.code === 'INSUFFICIENT_STOCK') {
-        setError('库存不足，无法消耗。')
+        // 显示后端返回的具体信息（含需要量与现存量）
+        setError(err.message)
       } else {
         setError(err instanceof Error ? err.message : String(err))
       }
@@ -58,11 +56,12 @@ export default function ConsumeDialog({ ingredient, onSubmit, onCancel }: Props)
   return (
     <div className="modal-backdrop">
       <div className="modal">
-        <h2>消耗食材</h2>
+        <h2>消耗库存</h2>
 
-        <p className="modal-ingredient-name">{ingredient.name}</p>
+        <p className="modal-ingredient-name">{definitionName}</p>
         <p className="modal-meta">
-          当前库存：{formatQuantityWithUnit(ingredient.quantity, ingredient.unit)}
+          当前：{formatQuantityWithUnit(record.quantity, record.unit)}
+          {record.storage_method && `　存储：${record.storage_method}`}
         </p>
 
         <form onSubmit={handleSubmit} noValidate>
@@ -73,15 +72,16 @@ export default function ConsumeDialog({ ingredient, onSubmit, onCancel }: Props)
               inputMode="decimal"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder="例如：200"
+              placeholder="例如：1"
               autoFocus
             />
           </label>
 
-          {previewRemaining !== null && (
+          <p className="modal-meta">单位：{record.unit}</p>
+
+          {remaining !== null && (
             <p className="consume-preview">
-              {formatQuantity(ingredient.quantity)} {ingredient.unit} → {previewRemaining}{' '}
-              {ingredient.unit}
+              剩余：{remaining} {record.unit}
             </p>
           )}
 
