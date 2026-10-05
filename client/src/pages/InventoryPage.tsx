@@ -98,6 +98,8 @@ export default function InventoryPage({ definitionsVersion = 0 }: Props) {
 
   async function handleUpdate(id: number, value: InventoryFormValue) {
     await updateInventory(id, {
+      // 编辑时也提交 definition_id：允许更换该记录所属的食材
+      definition_id: value.definition_id,
       quantity: value.quantity,
       unit: value.unit,
       purchase_date: value.purchase_date,

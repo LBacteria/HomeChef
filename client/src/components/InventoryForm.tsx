@@ -2,11 +2,14 @@ import { useMemo, useState } from 'react'
 
 import { STORAGE_METHODS, type IngredientDefinitionDetail, type InventoryRecord } from '../types/api'
 import { todayDateString } from '../format'
+import IngredientPicker from './IngredientPicker'
 
 /**
  * 库存记录表单（创建 / 编辑共用）。
  *
- * 创建时需要先选择**食材定义**；单位下拉来自该定义的 allowed_units。
+ * 食材选择使用 IngredientPicker（可搜索，支持默认名称与别名）。
+ * 选中的是 **definition.id**，名称只用于显示。
+ * 单位下拉来自该定义的 allowed_units。
  *
  * ⚠️ 前端只做基础格式校验；到期日期估算、单位是否合法、
  *    日期关系等业务规则全部由后端负责。
@@ -25,12 +28,17 @@ export interface InventoryFormValue {
 }
 
 interface Props {
-  /** 可选的食材定义列表（创建时用于选择） */
+  /** 可选的食材定义列表（保留以兼容旧调用方） */
   definitions: IngredientDefinitionDetail[]
   /** 传入则为编辑模式 */
   initial?: InventoryRecord
   /** 编辑模式下该记录所属定义（用于取 allowed_units） */
   initialDefinition?: IngredientDefinitionDetail
+  /**
+   * 用户通过选择器换了一个食材时回调。
+   * 父组件据此更新用于计算 allowed_units 的定义对象。
+   */
+  onDefinitionPicked?: (definition: IngredientDefinitionDetail) => void
   onSubmit: (value: InventoryFormValue) => Promise<void>
   onCancel: () => void
 }
@@ -41,6 +49,7 @@ export default function InventoryForm({
   definitions,
   initial,
   initialDefinition,
+  onDefinitionPicked,
   onSubmit,
   onCancel,
 }: Props) {
@@ -63,12 +72,23 @@ export default function InventoryForm({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  /** 当前选中的定义 */
+  /** 用户在本次表单中通过选择器新选的食材（优先于初始值） */
+  const [pickedDefinition, setPickedDefinition] = useState<IngredientDefinitionDetail | null>(
+    null,
+  )
+
+  /**
+   * 当前选中的定义。
+   *
+   * ⚠️ 编辑模式下也必须支持更换食材：
+   *    优先使用用户新选的，否则回退到 initialDefinition。
+   */
   const selectedDefinition = useMemo(() => {
+    if (pickedDefinition) return pickedDefinition
     if (isEdit) return initialDefinition
     if (definitionId === '') return undefined
     return definitions.find((d) => d.id === definitionId)
-  }, [isEdit, initialDefinition, definitionId, definitions])
+  }, [pickedDefinition, isEdit, initialDefinition, definitionId, definitions])
 
   /** 允许单位来自定义，不硬编码 */
   const allowedUnits = selectedDefinition?.allowed_units ?? []
@@ -76,7 +96,8 @@ export default function InventoryForm({
   function validate(): FieldErrors {
     const e: FieldErrors = {}
 
-    if (!isEdit && definitionId === '') {
+    // 创建与编辑都必须有食材（编辑时也允许更换）
+    if (definitionId === '') {
       e.definition_id = '请选择食材'
     }
 
@@ -146,33 +167,30 @@ export default function InventoryForm({
         <h2>{isEdit ? '编辑库存' : '添加库存'}</h2>
 
         <form onSubmit={handleSubmit} noValidate>
-          {!isEdit && (
-            <>
-              <label>
-                食材
-                <select
-                  value={definitionId}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setDefinitionId(v === '' ? '' : Number(v))
-                    setUnit('')
-                  }}
-                  autoFocus
-                >
-                  <option value="">请选择…</option>
-                  {definitions.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {errors.definition_id && <p className="field-error">{errors.definition_id}</p>}
-            </>
-          )}
-
-          {isEdit && selectedDefinition && (
-            <p className="modal-meta">食材：{selectedDefinition.name}</p>
+          {/* 食材选择：创建与编辑都支持，且都可搜索（默认名称 + 别名） */}
+          <label>
+            食材
+            <IngredientPicker
+              value={definitionId}
+              selected={selectedDefinition}
+              autoFocus={!isEdit}
+              onChange={(picked) => {
+                // ⚠️ 只保存 definition.id，绝不用名称反查
+                setDefinitionId(picked ? picked.id : '')
+                setPickedDefinition(picked)
+                // 更换食材后原单位可能不再合法，清空让用户重选
+                setUnit('')
+                if (picked) {
+                  onDefinitionPicked?.(picked)
+                }
+              }}
+            />
+          </label>
+          {errors.definition_id && <p className="field-error">{errors.definition_id}</p>}
+          {isEdit && (
+            <p className="hint">
+              更换食材后原单位可能不再适用，请重新选择单位。
+            </p>
           )}
 
           <label>

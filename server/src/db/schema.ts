@@ -298,6 +298,90 @@ export const standardIngredient = sqliteTable(
 )
 
 /* ============================================================
+ * v0.1.1 seed 基础设施
+ *
+ * 只增加两张辅助表，**不修改任何现有表结构**。
+ * 内置食材在数据库中就是普通的 ingredient_definition / alias / unit，
+ * 因此没有 is_system / is_builtin 之类的字段。
+ * ============================================================ */
+
+/** seed map 的状态枚举 */
+export const SEED_MAP_STATUSES = ['created', 'conflict'] as const
+
+export type SeedMapStatus = (typeof SEED_MAP_STATUSES)[number]
+
+/**
+ * seed_history —— seed 执行记录。
+ *
+ * 仅用于统计与诊断（"这批 seed 跑过没有、什么版本"）。
+ * ⚠️ **它不是跳过整个 seed 的唯一依据**：幂等的真正单元是
+ *    seed_ingredient_map 的 (seed_name, seed_key)，
+ *    这样未来 1.0.1 版本可以只追加新的 seed_key 而不重做已完成的。
+ */
+export const seedHistory = sqliteTable(
+  'seed_history',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    seed_name: text('seed_name').notNull().unique(),
+
+    version: text('version').notNull(),
+
+    applied_at: text('applied_at').notNull(),
+  },
+)
+
+/**
+ * seed_ingredient_map —— 每个内置食材的幂等单元。
+ *
+ * 一条记录 = 一个 (seed_name, seed_key)，代表"这条 seed 已经处理过了"。
+ *
+ * ⚠️⚠️ definition_id 必须 **ON DELETE SET NULL**，绝不能 CASCADE：
+ *    - SET NULL：用户删除食材后，map 行保留 → 下次 seed 跳过 → **不复活**
+ *    - CASCADE：map 行被删 → seed_key 消失 → 下次 seed **复活已删食材**
+ */
+export const seedIngredientMap = sqliteTable(
+  'seed_ingredient_map',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    seed_name: text('seed_name').notNull(),
+
+    /** seed 数据自己的稳定键，例如 'vegetable.tomato'。永不用中文名。 */
+    seed_key: text('seed_key').notNull(),
+
+    /**
+     * 关联的食材定义。
+     * NULL 表示两种情况之一，用 status 区分：
+     *   - status='conflict'：首次 seed 时名称冲突，从未创建
+     *   - status='created' 且 definition_id 为 NULL：创建过，但后来被用户删除
+     */
+    definition_id: integer('definition_id').references(() => ingredientDefinition.id, {
+      onDelete: 'set null',
+      onUpdate: 'cascade',
+    }),
+
+    /** created / conflict */
+    status: text('status').notNull(),
+
+    seeded_at: text('seeded_at').notNull(),
+
+    /** 用户删除该食材时由 Service 之外检测；当前仅作预留记录 */
+    deleted_at: text('deleted_at'),
+  },
+  (table) => [
+    uniqueIndex('seed_ingredient_map_name_key_unique').on(table.seed_name, table.seed_key),
+
+    check(
+      'seed_map_status_in_enum',
+      sql`${table.status} in (${sql.raw(sqlLiteralList(SEED_MAP_STATUSES))})`,
+    ),
+
+    index('seed_ingredient_map_definition_id_idx').on(table.definition_id),
+  ],
+)
+
+/* ============================================================
  * 类型导出
  * ============================================================ */
 
@@ -309,3 +393,7 @@ export type IngredientDefinitionUnit = typeof ingredientDefinitionUnit.$inferSel
 export type NewIngredientDefinitionUnit = typeof ingredientDefinitionUnit.$inferInsert
 export type StandardIngredient = typeof standardIngredient.$inferSelect
 export type NewStandardIngredient = typeof standardIngredient.$inferInsert
+export type SeedHistory = typeof seedHistory.$inferSelect
+export type NewSeedHistory = typeof seedHistory.$inferInsert
+export type SeedIngredientMap = typeof seedIngredientMap.$inferSelect
+export type NewSeedIngredientMap = typeof seedIngredientMap.$inferInsert

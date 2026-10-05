@@ -1,4 +1,4 @@
-import { eq, gt } from 'drizzle-orm'
+import { and, eq, gt, ne, sql } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
 import { standardIngredient } from '../db/schema.js'
@@ -52,6 +52,15 @@ export interface CreateStockInput {
 }
 
 export interface UpdateStockInput {
+  /**
+   * 更换该库存记录所属的食材定义。
+   *
+   * optional：不提供则保持现有 definition_id 不变。
+   * 提供时会校验新定义存在、且**最终 unit** 在新定义的允许单位内。
+   *
+   * ⚠️ 更换 definition **不会**重算任何日期（expiry 保持不变）。
+   */
+  definition_id?: number
   quantity?: number
   unit?: string
   purchase_date?: string | null
@@ -206,6 +215,78 @@ function assertDateConsistency(params: {
 }
 
 /* ============================================================
+ * 同批次查找（Phase 4 自动合并的基础）
+ * ============================================================ */
+
+/** 同批次键：五项完全相同才视为同一批次 */
+export interface BatchKey {
+  definition_id: number
+  purchase_date: string
+  storage_method: string
+  unit: string
+  /** ⚠️ 最终实际保存的 expiry_date；可为 NULL */
+  expiry_date: string | null
+}
+
+/**
+ * findBatchMatch 只依赖 select，因此用一个最小结构类型，
+ * 这样 db 与 db.transaction 传入的 tx 都能接受。
+ */
+type BatchQueryable = Pick<typeof db, 'select'>
+
+/**
+ * 查找同批次库存记录。
+ *
+ * 同批次键严格为五项：
+ *   definition_id / purchase_date / storage_method / unit / expiry_date
+ *
+ * ⚠️⚠️ expiry_date 必须使用 SQL 的 **IS**（NULL-safe 相等），不能用 `=`：
+ *
+ *     `expiry_date = NULL`   → 结果恒为 NULL，永不匹配
+ *       ⇒ 两条 expiry_date 均为 NULL 的记录永远无法合并（静默失效）
+ *
+ *     `expiry_date IS NULL`  → 真
+ *     `expiry_date IS '2026-10-07'` → 按值比较
+ *
+ *     SQLite 的 IS 是「NULL 安全相等」，正好符合本业务「NULL == NULL 视为相同」的要求。
+ *
+ * 其余四项在数据库中均为 NOT NULL，用 `=` 是安全的。
+ *
+ * ⚠️ **不比较 expiry_date_source**：它是来源标记，不是同批次条件。
+ *    estimated 与 manual 只要最终 expiry_date 相同，就属于同一批次。
+ *
+ * @param tx 事务句柄（必须在事务内调用，保证查找与写入的原子性）
+ * @param key 同批次键
+ * @param excludeId 编辑时排除自身，避免把自己判为匹配
+ */
+function findBatchMatch(
+  tx: BatchQueryable,
+  key: BatchKey,
+  excludeId?: number,
+): StandardIngredient | undefined {
+  const conditions = [
+    eq(standardIngredient.definition_id, key.definition_id),
+    eq(standardIngredient.purchase_date, key.purchase_date),
+    eq(standardIngredient.storage_method, key.storage_method),
+    eq(standardIngredient.unit, key.unit),
+    // ⚠️ 必须用 IS，不能用 =（NULL-safe）
+    sql`${standardIngredient.expiry_date} IS ${key.expiry_date}`,
+  ]
+
+  if (excludeId !== undefined) {
+    conditions.push(ne(standardIngredient.id, excludeId))
+  }
+
+  return tx
+    .select()
+    .from(standardIngredient)
+    .where(and(...conditions))
+    .orderBy(standardIngredient.id)
+    .limit(1)
+    .get()
+}
+
+/* ============================================================
  * 创建库存记录
  * ============================================================ */
 
@@ -268,24 +349,57 @@ export function createStock(input: CreateStockInput): StandardIngredient {
   assertValidStorageMethod(storageMethod)
 
   const timestamp = nowIso()
+  const incomingQuantity = prepareQuantityForWrite(input.quantity)
 
-  return db
-    .insert(standardIngredient)
-    .values({
+  // 9. 写入：先查找同批次记录，找到则合并数量，否则新建。
+  //
+  //    必须在**最终 expiry_date 计算完成之后**才查找（上面第 6 步已完成），
+  //    否则会拿未确定的到期日期去匹配，导致漏合并或误合并。
+  //
+  //    整个「查找 + UPDATE/INSERT」在一个事务内完成，保证原子性。
+  return db.transaction((tx) => {
+    const match = findBatchMatch(tx, {
       definition_id: input.definition_id,
-      quantity: prepareQuantityForWrite(input.quantity),
-      unit: input.unit,
       purchase_date: purchaseDate,
-      production_date: productionDate,
-      expiry_date: computed.expiry_date,
-      expiry_date_source: computed.expiry_date_source,
       storage_method: storageMethod,
-      note: normalizeNullableText(input.note),
-      created_at: timestamp,
-      updated_at: timestamp,
+      unit: input.unit,
+      expiry_date: computed.expiry_date,
     })
-    .returning()
-    .get()
+
+    // 9a. 命中同批次 → 合并数量，**保留已有记录的 ID 与 note / production_date**
+    if (match) {
+      const mergedQuantity = prepareQuantityForWrite(match.quantity + incomingQuantity)
+
+      return tx
+        .update(standardIngredient)
+        .set({
+          quantity: mergedQuantity,
+          updated_at: timestamp,
+        })
+        .where(eq(standardIngredient.id, match.id))
+        .returning()
+        .get()
+    }
+
+    // 9b. 未命中 → 新建记录
+    return tx
+      .insert(standardIngredient)
+      .values({
+        definition_id: input.definition_id,
+        quantity: incomingQuantity,
+        unit: input.unit,
+        purchase_date: purchaseDate,
+        production_date: productionDate,
+        expiry_date: computed.expiry_date,
+        expiry_date_source: computed.expiry_date_source,
+        storage_method: storageMethod,
+        note: normalizeNullableText(input.note),
+        created_at: timestamp,
+        updated_at: timestamp,
+      })
+      .returning()
+      .get()
+  })
 }
 
 /* ============================================================
@@ -371,13 +485,34 @@ export function getStockById(id: number): StandardIngredient {
 export function updateStock(id: number, input: UpdateStockInput): StandardIngredient {
   const current = getStockById(id)
 
-  // 单位
+  // ---- 最终 definition ----
+  //
+  // 若提供了 definition_id 则更换食材，否则保持原样。
+  // 必须在处理 unit 之前确定，因为单位合法性要针对**最终 definition**判断。
+  let nextDefinitionId = current.definition_id
+  if (input.definition_id !== undefined) {
+    if (!Number.isInteger(input.definition_id) || input.definition_id <= 0) {
+      throw validationError(`非法 definition_id：${String(input.definition_id)}。必须是正整数`)
+    }
+    // 定义不存在 → DEFINITION_NOT_FOUND（404），绝不自动创建
+    getDefinitionById(input.definition_id)
+    nextDefinitionId = input.definition_id
+  }
+
+  // ---- 最终 unit ----
+  //
+  // 校验对象是 nextDefinitionId，即**最终**所属定义，
+  // 因此「同时换 definition + 换 unit」时会用 (新定义, 新单位) 判断，
+  // 不会误用 (旧定义, 新单位) 或 (新定义, 旧单位)。
   let nextUnit = current.unit
   if (input.unit !== undefined) {
     assertValidUnit(input.unit)
-    assertUnitAllowed(current.definition_id, input.unit)
     nextUnit = input.unit
   }
+
+  // 只要 definition 或 unit 任一发生变化，就针对最终组合重新校验单位合法性。
+  // 即使两者都未显式提供，该组合原本就合法，重复校验也不会误伤。
+  assertUnitAllowed(nextDefinitionId, nextUnit)
 
   // 数量
   let nextQuantity = current.quantity
@@ -410,7 +545,11 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
   }
 
   // ---- 到期日期处理 ----
-  const definition = getDefinitionById(current.definition_id)
+  //
+  // ⚠️ 使用**最终** definition 的 shelf life。
+  //    注意：更换 definition **本身不会触发重算**——
+  //    只有 purchase_date / production_date 发生变化时才走重算分支（见下方条件）。
+  const definition = getDefinitionById(nextDefinitionId)
   const purchaseOrProductionChanged =
     (input.purchase_date !== undefined && nextPurchaseDate !== current.purchase_date) ||
     (input.production_date !== undefined && nextProductionDate !== current.production_date)
@@ -458,22 +597,79 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
     expirySource: nextExpirySource,
   })
 
-  return db
-    .update(standardIngredient)
-    .set({
-      quantity: nextQuantity,
-      unit: nextUnit,
-      purchase_date: nextPurchaseDate,
-      production_date: nextProductionDate,
-      expiry_date: nextExpiryDate,
-      expiry_date_source: nextExpirySource,
-      storage_method: nextStorageMethod,
-      note: input.note !== undefined ? normalizeNullableText(input.note) : current.note,
-      updated_at: nowIso(),
-    })
-    .where(eq(standardIngredient.id, id))
-    .returning()
-    .get()
+  const nextNote = input.note !== undefined ? normalizeNullableText(input.note) : current.note
+  const timestamp = nowIso()
+
+  // 最终写入：先查找**除自身外**的同批次记录，找到则合并。
+  //
+  // 合并策略（Phase 4 已确认）：
+  //   保留**当前正在编辑的记录 A** 的 ID 与 note / production_date，
+  //   把目标记录 B 的数量并入 A，然后**删除 B**。
+  //
+  //   即：A.quantity = A.quantity + B.quantity; DELETE B; 保留 A。
+  //
+  // ⚠️ UPDATE A + DELETE B 必须在同一事务内 ——
+  //    否则可能出现「A 数量已加但 B 未删除」或「B 已删但 A 未更新」。
+  return db.transaction((tx) => {
+    const match = findBatchMatch(
+      tx,
+      {
+        definition_id: nextDefinitionId,
+        purchase_date: nextPurchaseDate,
+        storage_method: nextStorageMethod,
+        unit: nextUnit,
+        expiry_date: nextExpiryDate,
+      },
+      id, // 排除自身
+    )
+
+    // 命中同批次 → 把目标记录的数量并入当前记录，并删除目标记录
+    if (match) {
+      const mergedQuantity = prepareQuantityForWrite(nextQuantity + match.quantity)
+
+      const updated = tx
+        .update(standardIngredient)
+        .set({
+          definition_id: nextDefinitionId,
+          quantity: mergedQuantity,
+          unit: nextUnit,
+          purchase_date: nextPurchaseDate,
+          production_date: nextProductionDate,
+          expiry_date: nextExpiryDate,
+          expiry_date_source: nextExpirySource,
+          storage_method: nextStorageMethod,
+          note: nextNote,
+          updated_at: timestamp,
+        })
+        .where(eq(standardIngredient.id, id))
+        .returning()
+        .get()
+
+      // 删除被合并掉的目标记录 B（其 note / production_date 按约定不保留）
+      tx.delete(standardIngredient).where(eq(standardIngredient.id, match.id)).run()
+
+      return updated
+    }
+
+    // 未命中 → 正常更新当前记录（Phase 3.1 行为不变）
+    return tx
+      .update(standardIngredient)
+      .set({
+        definition_id: nextDefinitionId,
+        quantity: nextQuantity,
+        unit: nextUnit,
+        purchase_date: nextPurchaseDate,
+        production_date: nextProductionDate,
+        expiry_date: nextExpiryDate,
+        expiry_date_source: nextExpirySource,
+        storage_method: nextStorageMethod,
+        note: nextNote,
+        updated_at: timestamp,
+      })
+      .where(eq(standardIngredient.id, id))
+      .returning()
+      .get()
+  })
 }
 
 /* ============================================================

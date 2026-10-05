@@ -133,6 +133,13 @@ export interface CreateInventoryInput {
  *   因此这里用可选属性，调用方需显式决定是否传该字段。
  */
 export interface UpdateInventoryInput {
+  /**
+   * 更换该库存记录所属的食材。
+   *
+   * 不传则保持原定义不变；传则后端校验新定义存在、
+   * 且**最终 unit** 在新定义的允许单位内。更换不会重算日期。
+   */
+  definition_id?: number
   quantity?: number
   unit?: string
   purchase_date?: string | null

@@ -50,12 +50,16 @@ const createStockSchema = {
  *    出现（含 null）→ 用户明确设置/清空
  *    不出现        → 由 Service 按当前 source 决定是否重算
  *    因此 schema 不设 required，route 用 `'expiry_date' in body` 判断。
+ *
+ * ⚠️ definition_id 可选：提供则更换该记录所属的食材。
+ *    additionalProperties 仍为 false —— 未知字段一律拒绝。
  */
 const updateStockSchema = {
   type: 'object',
   minProperties: 1,
   additionalProperties: false,
   properties: {
+    definition_id: { type: 'integer' },
     quantity: { type: 'number' },
     unit: { type: 'string', minLength: 1 },
     purchase_date: { type: ['string', 'null'] },
@@ -163,6 +167,7 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
 
       const body = request.body
       const updated = updateStock(id, {
+        ...('definition_id' in body ? { definition_id: body.definition_id as number } : {}),
         ...('quantity' in body ? { quantity: body.quantity as number } : {}),
         ...('unit' in body ? { unit: body.unit as string } : {}),
         ...('purchase_date' in body
