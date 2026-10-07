@@ -19,6 +19,7 @@ import {
   validationError,
 } from './errors.js'
 import { isBlankName, normalizeName } from './normalize.js'
+import { getCategoryById, isSeasoningCategory } from './categoryService.js'
 
 /**
  * 食材定义 Service（食材库）
@@ -137,12 +138,19 @@ export function listDefinitionAliases(definitionId: number) {
 
 export interface CreateDefinitionInput {
   name: string
-  /** 至少一个允许单位 */
+  /** 至少一个允许单位（**调味品允许 0 个**） */
   units: string[]
   /** 默认预估保质期（天），可选 */
   estimated_shelf_life_days?: number | null
   /** 初始别名，可选 */
   aliases?: string[]
+  /**
+   * 所属分类（v0.1.3）。
+   *
+   * 分类为「调味品」时：units 允许为空、保质期可为 null。
+   * 其他分类：units 至少一个。
+   */
+  category_id?: number | null
 }
 
 /**
@@ -156,17 +164,32 @@ export function createDefinition(input: CreateDefinitionInput): IngredientDefini
     throw validationError('食材名称不能为空')
   }
 
-  // 2. 至少一个允许单位
-  if (!Array.isArray(input.units) || input.units.length === 0) {
+  // 2. 分类校验（v0.1.3）
+  //
+  // 分类决定「是否调味品」，因此必须在单位校验之前确定。
+  const categoryId = input.category_id ?? null
+  if (categoryId !== null) {
+    getCategoryById(categoryId)
+  }
+  const seasoning = categoryId !== null && isSeasoningCategory(categoryId)
+
+  // 3. 允许单位
+  //
+  // ⚠️ v0.1.3 起规则分两种：
+  //     - 普通食材：**至少 1 个**允许单位
+  //     - 调味品：**允许 0 个**（库存只表达"有"，不管理数量与单位）
+  const rawUnits = Array.isArray(input.units) ? input.units : []
+
+  if (!seasoning && rawUnits.length === 0) {
     throw validationError('食材定义必须至少有一个允许单位')
   }
 
-  const uniqueUnits = [...new Set(input.units)]
+  const uniqueUnits = [...new Set(rawUnits)]
   for (const u of uniqueUnits) {
     assertValidUnit(u)
   }
 
-  // 3. 保质期校验
+  // 4. 保质期校验
   const shelfLife = input.estimated_shelf_life_days ?? null
   if (shelfLife !== null) {
     if (!Number.isInteger(shelfLife) || shelfLife < 0) {
@@ -196,6 +219,7 @@ export function createDefinition(input: CreateDefinitionInput): IngredientDefini
         name: input.name.trim(),
         name_normalized: nameNormalized,
         estimated_shelf_life_days: shelfLife,
+        category_id: categoryId,
         created_at: timestamp,
         updated_at: timestamp,
       })
@@ -390,9 +414,16 @@ export function removeAllowedUnit(definitionId: number, unit: string): void {
     )
   }
 
-  // 2. 定义必须至少保留一个允许单位
+  // 2. 单位数量下限
+  //
+  // ⚠️ v0.1.3 起规则分两种：
+  //     - 普通食材：必须至少保留 1 个允许单位
+  //     - 调味品：允许删到 0 个（库存不管理数量与单位）
   const remaining = listAllowedUnits(definitionId)
-  if (remaining.length <= 1) {
+  const definition = getDefinitionById(definitionId)
+  const seasoning = isSeasoningCategory(definition.category_id)
+
+  if (!seasoning && remaining.length <= 1) {
     throw validationError('食材定义必须至少保留一个允许单位')
   }
 

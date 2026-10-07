@@ -37,6 +37,7 @@ import { eq } from 'drizzle-orm'
 
 import { db, databasePath, sqlite } from '../src/db/index.js'
 import { ingredientDefinition, seedHistory, seedIngredientMap } from '../src/db/schema.js'
+import { listCategories } from '../src/services/categoryService.js'
 import {
   assertNameAvailableAcrossTables,
   createDefinition,
@@ -137,6 +138,58 @@ function assertSeedTablesExist(): void {
 }
 
 /* ============================================================
+ * v0.1.3：分类回填
+ * ============================================================ */
+
+/**
+ * 为既有 definition 回填分类。
+ *
+ * 只处理满足**全部**条件的记录：
+ *   1. 在 seed_ingredient_map 中且 status = 'created'（即来自内置 seed）
+ *   2. definition 仍然存在（definition_id 非 NULL）
+ *   3. definition.category_id **为 NULL**（从未设置过分类）
+ *
+ * 任何一条不满足就跳过 —— 绝不覆盖用户已设置的分类。
+ *
+ * @returns 实际回填的条数
+ */
+function backfillCategories(categoryIdByBudgetName: Map<string, number>): number {
+  let count = 0
+
+  for (const item of BUILTIN_INGREDIENTS) {
+    const entry = findMapEntry(item.key)
+    if (!entry || entry.status !== 'created' || entry.definition_id === null) {
+      continue
+    }
+
+    const targetCategoryId = categoryIdByBudgetName.get(item.category)
+    if (targetCategoryId === undefined) {
+      continue
+    }
+
+    const def = db
+      .select()
+      .from(ingredientDefinition)
+      .where(eq(ingredientDefinition.id, entry.definition_id))
+      .get()
+
+    if (!def) continue
+
+    // ⚠️ 已有分类 → 不动
+    if (def.category_id !== null) continue
+
+    db.update(ingredientDefinition)
+      .set({ category_id: targetCategoryId, updated_at: nowIso() })
+      .where(eq(ingredientDefinition.id, def.id))
+      .run()
+
+    count++
+  }
+
+  return count
+}
+
+/* ============================================================
  * 主流程
  * ============================================================ */
 
@@ -160,6 +213,43 @@ function runSeed(): void {
       process.exit(1)
     }
     seenKeys.add(item.key)
+  }
+
+  /* ---------- v0.1.3：准备分类映射 ---------- */
+  //
+  // 把「分类名 → category.id。建立映射，供创建与回填使用。
+  // 分类由 migration 0005 播种；这里只查不建。
+  const allCategories = listCategories()
+  const categoryIdByBudgetName = new Map<string, number>()
+  for (const c of allCategories) {
+    categoryIdByBudgetName.set(c.name, c.id)
+  }
+
+  const missingCategories = [
+    ...new Set(BUILTIN_INGREDIENTS.map((i) => i.category)),
+  ].filter((name) => !categoryIdByBudgetName.has(name))
+
+  if (missingCategories.length > 0) {
+    console.error(`错误：以下分类不存在（应由 migration 0005 播种）：${missingCategories.join('、')}`)
+    console.error('请先执行：npm run db:migrate --workspace server')
+    process.exit(1)
+  }
+
+  console.log(`分类映射已就绪：${categoryIdByBudgetName.size} 个分类`)
+  console.log('')
+
+  /* ---------- v0.1.3：回填既有 definition 的分类 ---------- */
+  //
+  // ⚠️ 只回填 category_id IS NULL 的记录 ——
+  //    用户在 v0.1.3 之前创建的 definition 没有分类，需要补上；
+  //    已经有分类的（无论是 seed 写入还是用户手改）**一律不动**。
+  //
+  // ⚠️ 只处理 seed map 中状态为 created 且 definition 仍存在的条目，
+  //    避免误碰用户自建的 definition。
+  const backfilled = backfillCategories(categoryIdByBudgetName)
+  if (backfilled > 0) {
+    console.log(`已为 ${backfilled} 个既有 definition 回填分类。`)
+    console.log('')
   }
 
   for (const item of BUILTIN_INGREDIENTS) {
@@ -206,6 +296,8 @@ function runSeed(): void {
         units: item.units,
         estimated_shelf_life_days: item.shelfLife,
         aliases: item.aliases.length > 0 ? item.aliases : undefined,
+        // v0.1.3：写入分类
+        category_id: categoryIdByBudgetName.get(item.category) ?? null,
       })
 
       // 2c. 记录 map（独立的极小写入；失败也不影响已建好的 definition）

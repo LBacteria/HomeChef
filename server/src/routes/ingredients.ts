@@ -22,6 +22,7 @@ import {
   sortStock,
 } from '../services/stockSortService.js'
 import { listDefinitions } from '../services/definitionService.js'
+import { isSeasoningCategory } from '../services/categoryService.js'
 
 /**
  * 库存记录 API
@@ -38,10 +39,16 @@ interface IdParams {
   id: string
 }
 
-/** 创建库存请求体 */
+/**
+ * 创建库存请求体。
+ *
+ * ⚠️ v0.1.3：quantity / unit 不再强制 required —— 调味品库存不需要它们
+ *    （Service 会用哨兵值填充）。普通食材仍由 **Service 层**强制要求，
+ *    确保「普通食材必须有数量与单位」的规则不被削弱。
+ */
 const createStockSchema = {
   type: 'object',
-  required: ['definition_id', 'quantity', 'unit'],
+  required: ['definition_id'],
   additionalProperties: false,
   properties: {
     definition_id: { type: 'integer' },
@@ -105,7 +112,14 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
    * ⚠️ sort / order 均为**白名单**，非法值一律 400。
    *    绝不把用户输入拼进 ORDER BY。
    */
-  app.get<{ Querystring: { includeZero?: string; sort?: string; order?: string } }>(
+  app.get<{
+    Querystring: {
+      includeZero?: string
+      sort?: string
+      order?: string
+      category_id?: string
+    }
+  }>(
     '/api/ingredients',
     {
       schema: {
@@ -116,13 +130,34 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
             includeZero: { type: 'string' },
             sort: { type: 'string', enum: [...SORT_FIELDS] },
             order: { type: 'string', enum: [...SORT_ORDERS] },
+            // v0.1.3：按分类筛选（缺省 = 全部）
+            category_id: { type: 'string' },
           },
         },
       },
     },
     async (request, reply) => {
       const includeZero = request.query.includeZero === 'true'
-      const rows = includeZero ? listStock() : listStockWithQuantity()
+      let rows = includeZero ? listStock() : listStockWithQuantity()
+
+      // v0.1.3：分类筛选（与排序并行工作）
+      const rawCategoryId = request.query.category_id
+      if (rawCategoryId !== undefined && rawCategoryId !== '') {
+        const categoryId = parsePositiveIntId(rawCategoryId)
+        if (categoryId === null) {
+          return reply
+            .code(400)
+            .send(
+              errorBody('VALIDATION_ERROR', `非法分类 ID：${rawCategoryId}。必须是正整数`),
+            )
+        }
+        const allowedDefIds = new Set(
+          listDefinitions()
+            .filter((d) => d.category_id === categoryId)
+            .map((d) => d.id),
+        )
+        rows = rows.filter((r) => allowedDefIds.has(r.definition_id))
+      }
 
       const settings = getSettings()
       const rule = {
@@ -132,9 +167,12 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
       const today = todayDateString()
 
       // 名称映射：排序需要食材默认名称（不用 alias）
+      const allDefs = listDefinitions()
       const nameMap = new Map<number, string>()
-      for (const def of listDefinitions()) {
+      const definitionById = new Map<number, (typeof allDefs)[number]>()
+      for (const def of allDefs) {
         nameMap.set(def.id, def.name)
+        definitionById.set(def.id, def)
       }
 
       const sortable = buildSortableList(rows, rule, today, (id) => nameMap.get(id) ?? '')
@@ -159,6 +197,9 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
 
       // 附加**动态计算**的临期状态（不存库）。
       // 兼容性：只是增加字段，不改变原有字段与结构。
+      //
+      // v0.1.3：附加 category_id 与 is_seasoning，
+      //         便于前端对调味品做特殊显示（"有"，不显示数量/日期）。
       const enriched = sorted.map((item) => {
         const evaluation = evaluateExpiryStatus(
           {
@@ -169,9 +210,14 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
           rule,
           today,
         )
+        const def = definitionById.get(item.row.definition_id)
+        const seasoning = isSeasoningCategory(def?.category_id ?? null)
+
         return {
           ...item.row,
           definition_name: item.name,
+          category_id: def?.category_id ?? null,
+          is_seasoning: seasoning,
           expiry_status: evaluation.status,
           days_remaining: evaluation.days_remaining,
           remaining_percentage: evaluation.remaining_percentage,

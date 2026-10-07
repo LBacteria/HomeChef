@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react'
 
-import { STORAGE_METHODS, type IngredientDefinitionDetail, type InventoryRecord } from '../types/api'
+import {
+  SEASONING_CATEGORY_NAME,
+  STORAGE_METHODS,
+  type Category,
+  type IngredientDefinitionDetail,
+  type InventoryRecord,
+} from '../types/api'
 import { todayDateString } from '../format'
 import IngredientPicker from './IngredientPicker'
 
@@ -17,19 +23,25 @@ import IngredientPicker from './IngredientPicker'
 
 export interface InventoryFormValue {
   definition_id: number
-  quantity: number
-  unit: string
+  /**
+   * 数量 / 单位。
+   * ⚠️ 调味品传 null（后端用哨兵值填充）；普通食材必须提供。
+   */
+  quantity: number | null
+  unit: string | null
   purchase_date: string | null
   production_date: string | null
   /** undefined = 不发送该字段（让后端决定是否重算）；null = 用户主动清空 */
   expiry_date: string | null | undefined
-  storage_method: string
+  storage_method: string | null
   note: string | null
 }
 
 interface Props {
   /** 可选的食材定义列表（保留以兼容旧调用方） */
   definitions: IngredientDefinitionDetail[]
+  /** 分类列表（v0.1.3）：用于判断所选食材是否为调味品 */
+  categories?: Category[]
   /** 传入则为编辑模式 */
   initial?: InventoryRecord
   /** 编辑模式下该记录所属定义（用于取 allowed_units） */
@@ -47,6 +59,7 @@ type FieldErrors = Record<string, string>
 
 export default function InventoryForm({
   definitions,
+  categories = [],
   initial,
   initialDefinition,
   onDefinitionPicked,
@@ -93,12 +106,29 @@ export default function InventoryForm({
   /** 允许单位来自定义，不硬编码 */
   const allowedUnits = selectedDefinition?.allowed_units ?? []
 
+  /**
+   * 是否调味品（v0.1.3）。
+   *
+   * ⚠️ 判定依据是**分类名**（与后端 SEASONING_CATEGORY_NAME 同一常量），
+   *    不使用 type 字段，也不复制后端的业务规则。
+   */
+  const seasoning = useMemo(() => {
+    const categoryId = selectedDefinition?.category_id
+    if (categoryId === null || categoryId === undefined) return false
+    return categories.find((c) => c.id === categoryId)?.name === SEASONING_CATEGORY_NAME
+  }, [selectedDefinition, categories])
+
   function validate(): FieldErrors {
     const e: FieldErrors = {}
 
     // 创建与编辑都必须有食材（编辑时也允许更换）
     if (definitionId === '') {
       e.definition_id = '请选择食材'
+    }
+
+    // ⚠️ 调味品不需要数量与单位，直接跳过这两项校验
+    if (seasoning) {
+      return e
     }
 
     if (quantity.trim().length === 0) {
@@ -134,6 +164,21 @@ export default function InventoryForm({
     setSubmitError(null)
 
     try {
+      // ⚠️ 调味品不传数量 / 单位 / 日期 / 储存方式 —— 后端用哨兵值填充
+      if (seasoning) {
+        await onSubmit({
+          definition_id: isEdit ? initial.definition_id : Number(definitionId),
+          quantity: null,
+          unit: null,
+          purchase_date: null,
+          production_date: null,
+          expiry_date: null,
+          storage_method: null,
+          note: note.trim().length > 0 ? note.trim() : null,
+        })
+        return
+      }
+
       await onSubmit({
         definition_id: isEdit ? initial.definition_id : Number(definitionId),
         quantity: Number(quantity),
@@ -187,92 +232,96 @@ export default function InventoryForm({
             />
           </label>
           {errors.definition_id && <p className="field-error">{errors.definition_id}</p>}
-          {isEdit && (
+
+          {/* ⚠️ 调味品只记录「家里有」，不显示数量/单位/日期/储存方式 */}
+          {seasoning ? (
             <p className="hint">
-              更换食材后原单位可能不再适用，请重新选择单位。
+              调味品库存只记录「有」，无需填写数量、单位与日期。
             </p>
+          ) : (
+            <>
+              <label>
+                数量
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  placeholder="例如：3"
+                />
+              </label>
+              {errors.quantity && <p className="field-error">{errors.quantity}</p>}
+
+              <label>
+                单位
+                <select
+                  value={unit}
+                  onChange={(e) => setUnit(e.target.value)}
+                  disabled={allowedUnits.length === 0}
+                >
+                  <option value="">请选择…</option>
+                  {allowedUnits.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {errors.unit && <p className="field-error">{errors.unit}</p>}
+              {selectedDefinition && allowedUnits.length === 0 && (
+                <p className="field-error">该食材尚未配置可用单位</p>
+              )}
+
+              <label>
+                入库日期
+                <input
+                  type="date"
+                  value={purchaseDate}
+                  onChange={(e) => setPurchaseDate(e.target.value)}
+                />
+              </label>
+              {errors.purchase_date && <p className="field-error">{errors.purchase_date}</p>}
+
+              <label>
+                生产日期（不知道可留空）
+                <input
+                  type="date"
+                  value={productionDate}
+                  onChange={(e) => setProductionDate(e.target.value)}
+                />
+              </label>
+
+              <label>
+                到期日期
+                <input
+                  type="date"
+                  value={expiryDate}
+                  onChange={(e) => setExpiryDate(e.target.value)}
+                />
+              </label>
+              {!isEdit && (
+                <p className="hint">
+                  留空则由 HomeChef 按该食材的预计保质期自动估算。
+                </p>
+              )}
+              {isEdit && initial.expiry_date_source === 'estimated' && (
+                <p className="hint">
+                  当前为 HomeChef 自动估算。修改后将成为手动填写的到期日期。
+                </p>
+              )}
+
+              <label>
+                存储方式
+                <select value={storageMethod} onChange={(e) => setStorageMethod(e.target.value)}>
+                  {STORAGE_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
           )}
-
-          <label>
-            数量
-            <input
-              type="text"
-              inputMode="decimal"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              placeholder="例如：3"
-            />
-          </label>
-          {errors.quantity && <p className="field-error">{errors.quantity}</p>}
-
-          <label>
-            单位
-            <select
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-              disabled={allowedUnits.length === 0}
-            >
-              <option value="">请选择…</option>
-              {allowedUnits.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </label>
-          {errors.unit && <p className="field-error">{errors.unit}</p>}
-          {selectedDefinition && allowedUnits.length === 0 && (
-            <p className="field-error">该食材尚未配置可用单位</p>
-          )}
-
-          <label>
-            入库日期
-            <input
-              type="date"
-              value={purchaseDate}
-              onChange={(e) => setPurchaseDate(e.target.value)}
-            />
-          </label>
-          {errors.purchase_date && <p className="field-error">{errors.purchase_date}</p>}
-
-          <label>
-            生产日期（不知道可留空）
-            <input
-              type="date"
-              value={productionDate}
-              onChange={(e) => setProductionDate(e.target.value)}
-            />
-          </label>
-
-          <label>
-            到期日期
-            <input
-              type="date"
-              value={expiryDate}
-              onChange={(e) => setExpiryDate(e.target.value)}
-            />
-          </label>
-          {!isEdit && (
-            <p className="hint">
-              留空则由 HomeChef 按该食材的预计保质期自动估算。
-            </p>
-          )}
-          {isEdit && initial.expiry_date_source === 'estimated' && (
-            <p className="hint">
-              当前为 HomeChef 自动估算。修改后将成为手动填写的到期日期。
-            </p>
-          )}
-
-          <label>
-            存储方式
-            <select value={storageMethod} onChange={(e) => setStorageMethod(e.target.value)}>
-              {STORAGE_METHODS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
 
           <label>
             备注

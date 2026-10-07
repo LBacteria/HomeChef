@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { getSettings, updateSettings } from '../api/settings'
+import CategoryManagerModal from '../components/CategoryManagerModal'
 import type { AppSettings, ExpiryWarningMode } from '../types/api'
 
 /**
@@ -25,6 +26,9 @@ export default function SettingsPage() {
 
   /** 表单本地状态（阈值用字符串，便于输入中间态） */
   const [thresholdInput, setThresholdInput] = useState('')
+
+  /** 分类管理 Modal 开关（v0.1.3） */
+  const [showCategories, setShowCategories] = useState(false)
 
   async function load() {
     setState('loading')
@@ -197,7 +201,25 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
+
+        {/* 分类管理入口（v0.1.3）——完整功能在 Modal 中，不铺在主页 */}
+        <div className="settings-block">
+          <h4 className="settings-block-title">分类管理</h4>
+          <div className="settings-inline-row">
+            <span>管理食材分类</span>
+            <button type="button" onClick={() => setShowCategories(true)}>
+              打开
+            </button>
+          </div>
+          <p className="hint">
+            新增或删除食材分类。仍有食材使用的分类无法删除。
+          </p>
+        </div>
       </div>
+
+      {showCategories && (
+        <CategoryManagerModal onClose={() => setShowCategories(false)} />
+      )}
     </section>
   )
 }

@@ -1,14 +1,16 @@
-import { and, eq, gt, ne, sql } from 'drizzle-orm'
+import { and, eq, ne, sql } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
-import { standardIngredient } from '../db/schema.js'
+import { SEASONING_CATEGORY_NAME, ingredientDefinition, standardIngredient } from '../db/schema.js'
 import type { ExpiryDateSource, StandardIngredient, StorageMethod, Unit } from '../db/schema.js'
 import { STORAGE_METHODS, UNITS } from '../db/schema.js'
 import {
   assertUnitAllowed,
   getDefinitionById,
 } from './definitionService.js'
+import { findCategoryByName, isSeasoningCategory, isSeasoningDefinition } from './categoryService.js'
 import {
+  categoryTransitionNotAllowedError,
   insufficientStockError,
   invalidDateRangeError,
   notFoundError,
@@ -39,8 +41,15 @@ import {
 
 export interface CreateStockInput {
   definition_id: number
-  quantity: number
-  unit: string
+  /**
+   * 数量。
+   *
+   * ⚠️ v0.1.3：调味品不需要数量（Service 用哨兵值填充），
+   *    但**普通食材必须提供**，由 Service 层强制校验。
+   */
+  quantity?: number
+  /** 单位。调味品不需要；普通食材必须提供且必须属于允许单位 */
+  unit?: string
   /** 入库日期；不提供则默认今天 */
   purchase_date?: string | null
   /** 生产日期；nullable，绝不反推 */
@@ -290,11 +299,33 @@ function findBatchMatch(
  * 创建库存记录
  * ============================================================ */
 
+/* ============================================================
+ * 调味品库存哨兵值（v0.1.3）
+ *
+ * ⚠️ 这些是**数据库兼容值**，不代表真实的调味品数量或日期。
+ *    调味品库存存在即表示「有」，UI 不显示数量/单位/日期/储存方式。
+ *
+ * 为什么用哨兵值而不是改表结构：
+ *   standard_ingredient 的 quantity / unit / purchase_date / storage_method
+ *   都是 NOT NULL（且 unit 有枚举 CHECK），让它们可空需要重建核心表，
+ *   风险高且影响 Phase 4 合并与临期逻辑。哨兵值方案零迁移风险。
+ * ============================================================ */
+
+/** 调味品库存的数量哨兵值 */
+export const SEASONING_SENTINEL_QUANTITY = 0
+
+/** 调味品库存的单位哨兵值（必须是固定枚举之一） */
+export const SEASONING_SENTINEL_UNIT: Unit = '个'
+
+/** 调味品库存的储存方式哨兵值 */
+export const SEASONING_SENTINEL_STORAGE: StorageMethod = '常温'
+
 /**
  * 创建库存记录。
  *
  * ⚠️ 同一 definition 可以创建**多条**记录，这是 1:N 模型的核心。
  *    再次添加同一种食材会创建新记录，而不是拒绝重复。
+ * ⚠️ 调味品例外：只保留一条「有」的记录（见上方特殊路径）。
  *
  * @throws ServiceError DEFINITION_NOT_FOUND / VALIDATION_ERROR /
  *                      UNIT_NOT_ALLOWED / INVALID_DATE_RANGE
@@ -303,12 +334,71 @@ export function createStock(input: CreateStockInput): StandardIngredient {
   // 1. 定义必须存在
   const definition = getDefinitionById(input.definition_id)
 
-  // 2. 单位校验：必须在固定枚举内，且属于该定义的允许单位
+  // 2. 调味品特殊路径（v0.1.3）
+  //
+  //    调味品库存只表达「家里有这个调味品」，不管理数量 / 单位 / 日期 / 储存方式。
+  //    数据库层面使用兼容哨兵值（不修改表结构）：
+  //      quantity = 0, unit = '个', purchase_date = 今天,
+  //      storage_method = '常温', expiry_date = NULL, expiry_date_source = NULL
+  //
+  //    ⚠️ 这些只是兼容值，不代表真实数量或日期。
+  //    ⚠️ expiry_date = NULL ⇒ expiry_status 恒为 no_expiry ⇒ 天然不进入临期系统。
+  if (isSeasoningCategory(definition.category_id)) {
+    const timestamp = nowIso()
+
+    return db.transaction((tx) => {
+      // 调味品也参与同批次合并（保证"有"不会重复出现多条）
+      const existing = tx
+        .select()
+        .from(standardIngredient)
+        .where(eq(standardIngredient.definition_id, input.definition_id))
+        .orderBy(standardIngredient.id)
+        .limit(1)
+        .get()
+
+      if (existing) {
+        return existing
+      }
+
+      return tx
+        .insert(standardIngredient)
+        .values({
+          definition_id: input.definition_id,
+          quantity: SEASONING_SENTINEL_QUANTITY,
+          unit: SEASONING_SENTINEL_UNIT,
+          purchase_date: todayDateString(),
+          production_date: null,
+          expiry_date: null,
+          expiry_date_source: null,
+          storage_method: SEASONING_SENTINEL_STORAGE,
+          note: normalizeNullableText(input.note),
+          created_at: timestamp,
+          updated_at: timestamp,
+        })
+        .returning()
+        .get()
+    })
+  }
+
+  // 3. 单位校验：必须在固定枚举内，且属于该定义的允许单位
+  //
+  // ⚠️ 普通食材必须提供 quantity 与 unit（调味品已在上方特殊路径返回）。
+  if (input.quantity === undefined) {
+    throw validationError('数量不能为空')
+  }
+  if (input.unit === undefined || input.unit === '') {
+    throw validationError('单位不能为空')
+  }
+
   assertValidUnit(input.unit)
   assertUnitAllowed(input.definition_id, input.unit)
 
-  // 3. 数量校验
-  assertValidQuantityValue(input.quantity)
+  // 类型收窄：上面的校验已保证二者存在
+  const requiredUnit: string = input.unit
+  const requiredQuantity: number = input.quantity
+
+  // 4. 数量校验
+  assertValidQuantityValue(requiredQuantity)
 
   // 4. 入库日期：不提供则默认今天
   const purchaseDate =
@@ -349,7 +439,7 @@ export function createStock(input: CreateStockInput): StandardIngredient {
   assertValidStorageMethod(storageMethod)
 
   const timestamp = nowIso()
-  const incomingQuantity = prepareQuantityForWrite(input.quantity)
+  const incomingQuantity = prepareQuantityForWrite(requiredQuantity)
 
   // 9. 写入：先查找同批次记录，找到则合并数量，否则新建。
   //
@@ -362,7 +452,7 @@ export function createStock(input: CreateStockInput): StandardIngredient {
       definition_id: input.definition_id,
       purchase_date: purchaseDate,
       storage_method: storageMethod,
-      unit: input.unit,
+      unit: requiredUnit,
       expiry_date: computed.expiry_date,
     })
 
@@ -387,7 +477,7 @@ export function createStock(input: CreateStockInput): StandardIngredient {
       .values({
         definition_id: input.definition_id,
         quantity: incomingQuantity,
-        unit: input.unit,
+        unit: requiredUnit,
         purchase_date: purchaseDate,
         production_date: productionDate,
         expiry_date: computed.expiry_date,
@@ -415,14 +505,50 @@ export function listStock(): StandardIngredient[] {
  * 列出全部库存记录（仅 quantity > 0）。
  *
  * 供库存列表使用：0 数量记录在数据库中**保留**，但列表不显示。
+ *
+ * ⚠️ v0.1.3 例外：**调味品库存**使用 quantity = 0 作为"存在即表示有"的哨兵值，
+ *    因此不能被数量过滤掉。这里用「quantity > 0 OR definition 属于调味品分类」
+ *    精确区分，**不改变普通食材的数量语义**。
  */
 export function listStockWithQuantity(): StandardIngredient[] {
-  return db
-    .select()
-    .from(standardIngredient)
-    .where(gt(standardIngredient.quantity, 0))
-    .orderBy(standardIngredient.id)
+  // 先取出调味品分类的所有 definition id
+  const seasoningDefIds = listSeasoningDefinitionIds()
+
+  const rows = db.select().from(standardIngredient).orderBy(standardIngredient.id).all()
+
+  return rows.filter((row) => {
+    if (row.quantity > 0) return true
+    // quantity = 0 时，只有调味品库存保留
+    return seasoningDefIds.has(row.definition_id)
+  })
+}
+
+/** 取出所有属于「调味品」分类的 definition id */
+function listSeasoningDefinitionIds(): Set<number> {
+  const seasoning = findCategoryByName(SEASONING_CATEGORY_NAME)
+  if (!seasoning) {
+    return new Set()
+  }
+
+  const rows = db
+    .select({ id: ingredientDefinition.id })
+    .from(ingredientDefinition)
+    .where(eq(ingredientDefinition.category_id, seasoning.id))
     .all()
+
+  return new Set(rows.map((r) => r.id))
+}
+
+/** 某 definition 是否为调味品（供 createStock / updateStock 使用） */
+export function isSeasoningDefinitionId(definitionId: number): boolean {
+  const def = db
+    .select()
+    .from(ingredientDefinition)
+    .where(eq(ingredientDefinition.id, definitionId))
+    .get()
+
+  if (!def) return false
+  return isSeasoningCategory(def.category_id)
 }
 
 /**
@@ -499,6 +625,37 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
     nextDefinitionId = input.definition_id
   }
 
+  // ---- 跨类切换保护（v0.1.3）----
+  //
+  // 规则：
+  //   普通食材 → 普通食材   ✅
+  //   调味品   → 调味品     ✅
+  //   普通食材 → 调味品     ❌ 409 CATEGORY_TRANSITION_NOT_ALLOWED
+  //   调味品   → 普通食材   ❌ 409 CATEGORY_TRANSITION_NOT_ALLOWED
+  //
+  // 原因：
+  //   普通库存有真实 quantity / unit / dates / storage_method；
+  //   调味品库存用 B2 sentinel，语义是"有 / 无"。
+  //   允许互切会导致：真实数量被静默重写成 sentinel，
+  //   或 sentinel 继承真实数量，两者都会产生语义错误的库存数据。
+  //
+  // ⚠️ 检测必须在**任何字段变更之前**，保证失败是完全原子性的 no-op
+  //    （不改 quantity / unit / dates / expiry / storage_method / note /
+  //      definition_id / updated_at）。
+  //
+  // ⚠️ 只检查是否**跨类**，不禁止同类之间更换 definition。
+  const currentIsSeasoning = isSeasoningDefinition(current.definition_id)
+  const nextIsSeasoning = isSeasoningDefinition(nextDefinitionId)
+
+  if (nextDefinitionId !== current.definition_id && currentIsSeasoning !== nextIsSeasoning) {
+    const from = currentIsSeasoning ? '调味品' : '普通食材'
+    const to = nextIsSeasoning ? '调味品' : '普通食材'
+    throw categoryTransitionNotAllowedError(
+      `不允许在「${from}」与「${to}」之间切换库存分类。` +
+        `普通食材库存与调味品库存的语义不同，请删除后重新添加。`,
+    )
+  }
+
   // ---- 最终 unit ----
   //
   // 校验对象是 nextDefinitionId，即**最终**所属定义，
@@ -510,9 +667,28 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
     nextUnit = input.unit
   }
 
-  // 只要 definition 或 unit 任一发生变化，就针对最终组合重新校验单位合法性。
-  // 即使两者都未显式提供，该组合原本就合法，重复校验也不会误伤。
-  assertUnitAllowed(nextDefinitionId, nextUnit)
+  // 单位合法性校验。
+  //
+  // ⚠️ v0.1.3 例外：**调味品 → 调味品**时跳过 allowed-units 校验。
+  //
+  //    原因：调味品库存的 unit 是 B2 sentinel（恒为「个」），
+  //    它**不代表调味品的真实单位**；而调味品 definition 合法地允许
+  //    allowed_units = []。若照常校验，sentinel 必然不在空列表中，
+  //    导致调味品永远无法更换 definition。
+  //
+  //    注意：
+  //      - 不给调味品自动添加 allowed unit
+  //      - 不修改 definition 的 allowed_units
+  //      - 不修改 B2 sentinel
+  //      - 不影响普通食材的 unit 校验
+  //      - 用户显式传入的 unit 仍先经过 assertValidUnit（枚举校验）
+  if (currentIsSeasoning && nextIsSeasoning) {
+    // 跳过 allowed-units 校验（sentinel unit 不参与调味品语义）
+  } else {
+    // 只要 definition 或 unit 任一发生变化，就针对最终组合重新校验单位合法性。
+    // 即使两者都未显式提供，该组合原本就合法，重复校验也不会误伤。
+    assertUnitAllowed(nextDefinitionId, nextUnit)
+  }
 
   // 数量
   let nextQuantity = current.quantity

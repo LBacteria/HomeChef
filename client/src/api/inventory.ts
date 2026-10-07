@@ -22,6 +22,8 @@ export interface ListInventoryOptions {
   sort?: SortField
   /** 排序方向（后端白名单） */
   order?: SortOrder
+  /** 分类筛选（v0.1.3）；null / undefined = 全部 */
+  categoryId?: number | null
 }
 
 /**
@@ -30,12 +32,16 @@ export interface ListInventoryOptions {
  * 默认由后端隐藏 quantity = 0 的记录。
  *
  * ⚠️ 排序由**后端**执行：仅传参，不在前端重排。
+ * ⚠️ 调味品库存（quantity = 0）不会被隐藏 —— 后端有专门处理。
  */
 export function listInventory(options: ListInventoryOptions = {}): Promise<InventoryRecord[]> {
   const params = new URLSearchParams()
   if (options.includeZero) params.set('includeZero', 'true')
   if (options.sort) params.set('sort', options.sort)
   if (options.order) params.set('order', options.order)
+  if (options.categoryId !== null && options.categoryId !== undefined) {
+    params.set('category_id', String(options.categoryId))
+  }
 
   const query = params.toString()
   return request<InventoryRecord[]>(`/ingredients${query ? `?${query}` : ''}`)

@@ -85,6 +85,19 @@ export const ingredientDefinition = sqliteTable(
     // 仅用于**新建库存记录**时估算到期日期，绝不会自动修改已有记录。
     estimated_shelf_life_days: integer('estimated_shelf_life_days'),
 
+    /**
+     * 所属分类（v0.1.3）。
+     *
+     * 可空：允许「尚未回填分类」的中间状态（迁移期间）。
+     * 新建 definition 时由 Service 要求必填。
+     *
+     * ON DELETE RESTRICT —— 仍有 definition 引用时，数据库层拒绝删除分类。
+     */
+    category_id: integer('category_id').references(() => category.id, {
+      onDelete: 'restrict',
+      onUpdate: 'cascade',
+    }),
+
     created_at: text('created_at').notNull(),
     updated_at: text('updated_at').notNull(),
   },
@@ -94,6 +107,8 @@ export const ingredientDefinition = sqliteTable(
       'shelf_life_non_negative',
       sql`${table.estimated_shelf_life_days} is null or ${table.estimated_shelf_life_days} >= 0`,
     ),
+
+    index('ingredient_definition_category_id_idx').on(table.category_id),
   ],
 )
 
@@ -464,6 +479,44 @@ export const appSettings = sqliteTable(
 )
 
 /* ============================================================
+ * v0.1.3 食材分类
+ *
+ * ⚠️ 只有一套分类机制：category 表 + ingredient_definition.category_id。
+ *    没有 ingredient_type / seasoning_type / builtin_category / custom_category。
+ *    内置分类与用户自定义分类使用完全相同的结构。
+ * ============================================================ */
+
+/**
+ * 食材分类。
+ *
+ * - 名称唯一（name_normalized UNIQUE）
+ * - sort_order 决定 UI 显示顺序
+ * - 内置分类与用户创建的分类**没有任何结构差异**
+ */
+export const category = sqliteTable(
+  'category',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    /** 显示名称（保留用户输入的写法，仅 trim） */
+    name: text('name').notNull(),
+
+    /** 归一化名称：trim + toLowerCase，全局唯一 */
+    name_normalized: text('name_normalized').notNull().unique(),
+
+    /** 显示顺序（默认分类按产品定义顺序；用户新增的排在其后） */
+    sort_order: integer('sort_order').notNull().default(0),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [index('category_sort_order_idx').on(table.sort_order)],
+)
+
+/** 调味品分类名（用于「调味品特殊行为」判断，不引入 type 字段） */
+export const SEASONING_CATEGORY_NAME = '调味品'
+
+/* ============================================================
  * 类型导出
  * ============================================================ */
 
@@ -481,3 +534,5 @@ export type SeedIngredientMap = typeof seedIngredientMap.$inferSelect
 export type NewSeedIngredientMap = typeof seedIngredientMap.$inferInsert
 export type AppSettings = typeof appSettings.$inferSelect
 export type NewAppSettings = typeof appSettings.$inferInsert
+export type Category = typeof category.$inferSelect
+export type NewCategory = typeof category.$inferInsert

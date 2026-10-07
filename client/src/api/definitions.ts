@@ -81,6 +81,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export function listDefinitions(
   search?: string,
   order: DefinitionSortOrder = 'asc',
+  categoryId?: number | null,
 ): Promise<IngredientDefinitionDetail[]> {
   const params = new URLSearchParams()
   if (search !== undefined && search.trim().length > 0) {
@@ -88,6 +89,10 @@ export function listDefinitions(
   }
   params.set('sort', 'name')
   params.set('order', order)
+  // v0.1.3：分类筛选（null / undefined = 全部）
+  if (categoryId !== null && categoryId !== undefined) {
+    params.set('category_id', String(categoryId))
+  }
 
   return request<IngredientDefinitionDetail[]>(`/definitions?${params.toString()}`)
 }

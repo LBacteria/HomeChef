@@ -23,6 +23,8 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   HAS_STOCK: 409,
   UNIT_IN_USE: 409,
   UNIT_NOT_ALLOWED: 400,
+  CATEGORY_IN_USE: 409,
+  CATEGORY_TRANSITION_NOT_ALLOWED: 409,
 }
 
 /** 统一错误响应体（ARCHITECTURE.md 第 9.2 节） */

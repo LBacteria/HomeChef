@@ -546,13 +546,14 @@ ingredient_alias.alias_normalized     = '西红柿'   ← 单独看也合法
 | 不创建的表 | 原因 |
 |---|---|
 | `consumption_history` | 决策 12：不记录消耗历史 |
-| `recipe` / `recipe_ingredient` | 范围外，后续阶段 |
+| `recipe` / `recipe_ingredient` | 范围外，后续阶段（v0.2.0） |
 | `recommendation` | 范围外 |
 | `shopping_list` | 范围外 |
 | `unit`（单位表） | 10 个固定枚举，用 CHECK 约束即可 |
 | `ingredient_merge` | 决策 22：不做定义合并 |
 | `user` | 单用户本地应用 |
-| `category` | 需求中未提出 |
+
+> `category` 表已于 **v0.1.3** 引入，见 **第 15 节**。
 
 **此外也不创建**：SQLite Trigger（跨表唯一性由 Service 负责）、FTS 虚拟表、视图。
 
@@ -642,8 +643,8 @@ PRAGMA foreign_keys = ON;
 | 名称/别名跨表唯一 | 数据库无法跨表建 UNIQUE |
 | 搜索与精确解析 | 业务逻辑 |
 | 默认名称切换（含别名升降级） | 需要事务内的多步操作 |
-| 至少一个允许单位 | 跨行约束，CHECK 无法表达 |
-| 库存单位属于允许单位 | 跨表校验 |
+| 至少一个允许单位（**调味品例外**，见第 15 节） | 跨行约束，CHECK 无法表达 |
+| 库存单位属于允许单位（**调味品 → 调味品除外**） | 跨表校验 |
 | 到期日期估算与来源判定 | 业务规则 |
 | 库存是否足够 | 需要先读再判断 |
 | 消耗事务 | 原子性由 Service 控制事务边界 |
@@ -658,3 +659,112 @@ PRAGMA foreign_keys = ON;
 **跨表重名同样由 Service 保证**，理由同上。
 
 这两条是当前设计中**明确的取舍**，不是遗漏。
+
+---
+
+## 15. v0.1.2 / v0.1.3 数据库变更
+
+### 15.1 迁移一览
+
+| 文件 | 版本 | 内容 |
+|---|---|---|
+| `0000_calm_ronan.sql` | v0.1.0 | 初始四表 |
+| `0001_ingredient_definition_model.sql` | v0.1.0 | 食材定义模型 |
+| `0002_definition_id_autoincrement.sql` | v0.1.0 | `definition_id` 自增 |
+| `0003_seed_infrastructure.sql` | v0.1.0 | seed 基础设施 |
+| `0004_app_settings.sql` | **v0.1.2** | `app_settings` 单行设置表 |
+| `0005_category.sql` | **v0.1.3** | `category` 表 + `ingredient_definition.category_id` |
+
+`meta/_journal.json` 与上述 6 个文件一一对应。
+
+### 15.2 `app_settings`（v0.1.2）
+
+**单行表**，用 CHECK 约束保证只有 `id = 1` 一行。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | INTEGER PK | 固定为 1 |
+| `expiry_warning_mode` | TEXT | `'days'` 或 `'percentage'`，默认 `'days'` |
+| `expiry_warning_threshold` | INTEGER | 默认 3 |
+| `allow_expired_for_recipe` | INTEGER | 0/1（SQLite 无原生 BOOLEAN），默认 0 |
+| `created_at` / `updated_at` | TEXT | ISO 时间戳 |
+
+**读取行为**：`getSettings()` 在行不存在时返回**内置默认值**，**不产生写入副作用**。
+只有 `PATCH /api/settings` 会 upsert 该行。
+
+### 15.3 `category`（v0.1.3）
+
+| 字段 | 类型 | 约束 |
+|---|---|---|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT |
+| `name` | TEXT | NOT NULL（保留用户输入的写法，仅 trim） |
+| `name_normalized` | TEXT | NOT NULL，**UNIQUE** |
+| `sort_order` | INTEGER | NOT NULL DEFAULT 0 |
+| `created_at` / `updated_at` | TEXT | NOT NULL |
+
+**索引**：`category_name_normalized_unique`（UNIQUE）、`category_sort_order_idx`。
+
+**内置分类与用户自定义分类结构完全相同**，没有 `builtin_category` / `custom_category` 之分。
+
+### 15.4 `ingredient_definition.category_id`（v0.1.3）
+
+```
+FOREIGN KEY (`category_id`) REFERENCES `category`(`id`)
+  ON UPDATE CASCADE
+  ON DELETE RESTRICT
+```
+
+**索引**：`ingredient_definition_category_id_idx`。
+
+**可空性**：允许 `NULL`，用于兼容「尚未回填分类」的中间状态。
+实际数据在 seed 后**全部已回填**（0 个 NULL）。
+
+> ⚠️ **`ON DELETE RESTRICT` 不是 cascade。**
+> 删除仍有食材引用的分类时，**业务层先行返回 `409 CATEGORY_IN_USE`**，
+> 数据库外键作为最后一道防线。**不存在级联删除食材的行为。**
+
+### 15.5 迁移 0005 的实现要点
+
+SQLite 无法直接 `ALTER TABLE` 增加带外键约束的列，因此采用标准做法：
+
+1. `PRAGMA foreign_keys = OFF`（避免 `DROP TABLE` 触发子表 CASCADE）
+2. 建 `category` 表并播种 **19 个默认分类**（`INSERT OR IGNORE`，可重复执行）
+3. 建 `ingredient_definition_new`（含 `category_id` + 外键 + CHECK）
+4. 原样搬迁所有行（`id` 保持不变，`category_id` 先为 NULL）
+5. 同步 `sqlite_sequence` 的最大 id
+6. `DROP TABLE` 旧表 → `RENAME` 新表 → 重建唯一索引与普通索引
+7. `PRAGMA foreign_keys = ON`
+
+**不修改任何旧 migration**，也**不删除任何现有数据**。
+
+### 15.6 Seed 与分类回填
+
+- `builtin-ingredients.ts` 中的 `category` 字段在 v0.1.3 起**真正入库**
+- 229 个内置 definition 按 seed 文件的分类写入 `category_id`
+- 对**已有** definition 采取**只补不覆盖**策略：
+  仅当 `category_id IS NULL` 时才回填，用户手改过的分类**绝不覆盖**
+- `seed_history` / `seed_ingredient_map` 结构未变（v0.1.3 无需新迁移）
+- 内置种子仍是 **INSERT-only，不覆盖用户修改**
+
+### 15.7 调味品库存不使用新表结构（B2 方案）
+
+`standard_ingredient` 的 `quantity` / `unit` / `purchase_date` / `storage_method`
+均为 `NOT NULL`（`unit` 还有枚举 CHECK）。让它们可空需要重建核心表，
+风险高且会波及 Phase 4 合并与临期逻辑。
+
+因此 v0.1.3 **不修改 `standard_ingredient` 结构**，调味品库存改用内部兼容值：
+
+| 字段 | 值 |
+|---|---|
+| `quantity` | `0` |
+| `unit` | `'个'` |
+| `purchase_date` | 当天 |
+| `storage_method` | `'常温'` |
+| `expiry_date` | `NULL` |
+| `expiry_date_source` | `NULL` |
+
+> ⚠️ 这些是**数据库兼容值**，不代表用户真实选择了「个」作为调味品计量单位。
+> 业务语义是 **presence-only（有 / 无）**，见 `ARCHITECTURE.md` 第 13 节。
+
+**这样做的直接好处**：`expiry_date = NULL` ⇒ 调味品天然落在 `no_expiry` 分支，
+**不会进入临期 / 过期判断**，无需为临期系统增加特例。

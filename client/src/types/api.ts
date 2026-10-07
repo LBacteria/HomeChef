@@ -50,6 +50,8 @@ export interface IngredientDefinition {
   name_normalized: string
   /** 默认预估保质期（天）；null 表示不估算 */
   estimated_shelf_life_days: number | null
+  /** 所属分类 id（v0.1.3）；null 表示尚未设置分类 */
+  category_id: number | null
   created_at: string
   updated_at: string
 }
@@ -68,10 +70,12 @@ export interface IngredientDefinitionDetail extends IngredientDefinition {
 /** 创建食材定义 */
 export interface CreateDefinitionInput {
   name: string
-  /** 至少一个 */
+  /** 至少一个；**调味品允许为空数组** */
   units: string[]
   aliases?: string[]
   estimated_shelf_life_days?: number | null
+  /** 所属分类（v0.1.3） */
+  category_id?: number | null
 }
 
 /** 更新食材定义 */
@@ -123,6 +127,15 @@ export interface InventoryRecord {
   remaining_percentage: number | null
   /** 食材默认名称（后端随列表返回，便于按名称排序与展示） */
   definition_name?: string
+  /** 所属分类 id（v0.1.3） */
+  category_id?: number | null
+  /**
+   * 是否为调味品（v0.1.3，后端计算）。
+   *
+   * ⚠️ 调味品库存只表示「有」，前端应隐藏数量/单位/日期/储存方式，
+   *    并且不提供「消耗」操作。
+   */
+  is_seasoning?: boolean
 }
 
 /**
@@ -151,11 +164,45 @@ export type DefinitionSortField = 'name'
  */
 export type DefinitionSortOrder = 'asc' | 'desc'
 
+/* ============================================================
+ * 食材分类（v0.1.3）
+ *
+ * ⚠️ 只有一套分类：内置分类与用户自定义分类结构完全相同。
+ * ============================================================ */
+
+/** 食材分类 */
+export interface Category {
+  id: number
+  name: string
+  name_normalized: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+/** 创建分类 */
+export interface CreateCategoryInput {
+  name: string
+}
+
+/**
+ * 调味品分类名。
+ *
+ * ⚠️ 调味品特殊行为**只依据分类名**判断，不使用 type 字段。
+ *    与后端 SEASONING_CATEGORY_NAME 保持一致。
+ */
+export const SEASONING_CATEGORY_NAME = '调味品'
+
 /** 创建库存记录 */
 export interface CreateInventoryInput {
   definition_id: number
-  quantity: number
-  unit: string
+  /**
+   * 数量。
+   * ⚠️ 调味品**不需要**（后端用哨兵值填充）；普通食材必须提供。
+   */
+  quantity?: number
+  /** 单位。调味品不需要；普通食材必须提供且属于允许单位 */
+  unit?: string
   purchase_date?: string | null
   production_date?: string | null
   /** 提供则为 manual；不提供则由后端估算 */

@@ -965,3 +965,196 @@ button.danger:hover:not(:disabled) {
   font-size: 0.8rem;
   color: var(--muted);
 }
+
+/* ============================================================
+ * 分类筛选侧栏（v0.1.3）
+ * ============================================================ */
+
+.with-category-filter {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.with-category-filter-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.category-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 132px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.category-filter-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.category-filter-item:hover {
+  background: #f2f2f2;
+}
+
+.category-filter-item.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.category-filter-count {
+  font-size: 0.76rem;
+  opacity: 0.7;
+}
+
+@media (max-width: 640px) {
+  .with-category-filter {
+    flex-direction: column;
+  }
+
+  .category-filter {
+    flex: none;
+    width: 100%;
+    max-height: 180px;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+/* ---- 分类标签（食材库列表内显示）---- */
+
+.category-tag {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #eef3ef;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+/* ---- 调味品标记（库存列表）---- */
+
+.seasoning-badge {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #f0e6d2;
+  color: #7a5a1e;
+  font-size: 0.72rem;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+/* ============================================================
+ * 分类管理 Modal（v0.1.3）
+ * ============================================================ */
+
+.category-modal {
+  max-width: 460px;
+}
+
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.modal-title-row h2 {
+  margin: 0;
+}
+
+.modal-close {
+  border: none;
+  background: none;
+  padding: 0 6px;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: #1f1f1f;
+}
+
+.category-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.category-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.category-item:last-child {
+  border-bottom: none;
+}
+
+.category-name {
+  font-size: 0.92rem;
+}
+
+.category-item button {
+  padding: 3px 10px;
+  font-size: 0.82rem;
+}
+
+.category-add {
+  width: 100%;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.category-add:hover {
+  background: #f7f7f7;
+}
+
+/* ---- 设置页行内布局 ---- */
+
+.settings-inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.92rem;
+}
+
+.settings-inline-row button {
+  padding: 4px 14px;
+}

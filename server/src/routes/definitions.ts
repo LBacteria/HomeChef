@@ -49,20 +49,29 @@ interface UnitParams {
   unit: string
 }
 
-/** 创建 definition 的请求体 */
+/**
+ * 创建 definition 的请求体。
+ *
+ * ⚠️ v0.1.3：
+ *   - 增加 category_id
+ *   - units 不再强制 required、不再限制 minItems ——
+ *     **调味品允许 0 个 allowed unit**
+ *     普通食材仍由 **Service 层**强制要求至少一个单位
+ *     （保证「普通食材必须有单位」的规则不被削弱）
+ */
 const createDefinitionSchema = {
   type: 'object',
-  required: ['name', 'units'],
+  required: ['name'],
   additionalProperties: false,
   properties: {
     name: { type: 'string', minLength: 1 },
     units: {
       type: 'array',
-      minItems: 1,
       items: { type: 'string' },
     },
     aliases: { type: 'array', items: { type: 'string' } },
     estimated_shelf_life_days: { type: ['integer', 'null'] },
+    category_id: { type: ['integer', 'null'] },
   },
 } as const
 
@@ -130,7 +139,9 @@ export function registerDefinitionRoutes(app: FastifyInstance): void {
    *    排序在搜索之后进行，与 search 完全兼容。
    *    搜索逻辑本身未做任何改动。
    */
-  app.get<{ Querystring: { search?: string; sort?: string; order?: string } }>(
+  app.get<{
+    Querystring: { search?: string; sort?: string; order?: string; category_id?: string }
+  }>(
     '/api/definitions',
     {
       schema: {
@@ -141,13 +152,32 @@ export function registerDefinitionRoutes(app: FastifyInstance): void {
             search: { type: 'string' },
             sort: { type: 'string', enum: [...DEFINITION_SORT_FIELDS] },
             order: { type: 'string', enum: [...DEFINITION_SORT_ORDERS] },
+            // v0.1.3：按分类筛选（缺省 = 全部）
+            category_id: { type: 'string' },
           },
         },
       },
     },
     async (request, reply) => {
       const search = request.query.search
-      const items = search === undefined ? searchDefinitions('') : searchDefinitions(search)
+      let items = search === undefined ? searchDefinitions('') : searchDefinitions(search)
+
+      // v0.1.3：分类筛选（与搜索、排序并行工作）
+      const rawCategoryId = request.query.category_id
+      if (rawCategoryId !== undefined && rawCategoryId !== '') {
+        const categoryId = parsePositiveIntId(rawCategoryId)
+        if (categoryId === null) {
+          return reply
+            .code(400)
+            .send(
+              errorBody(
+                'VALIDATION_ERROR',
+                `非法分类 ID：${rawCategoryId}。必须是正整数`,
+              ),
+            )
+        }
+        items = items.filter((d) => d.category_id === categoryId)
+      }
 
       // Service 层再次校验（不只依赖 JSON Schema）
       const sortField = request.query.sort ?? DEFAULT_DEFINITION_SORT
@@ -207,9 +237,12 @@ export function registerDefinitionRoutes(app: FastifyInstance): void {
       const body = request.body
       const created = createDefinition({
         name: body.name as string,
-        units: body.units as string[],
+        // ⚠️ units 可能缺省（调味品）→ 传空数组，由 Service 决定是否合法
+        units: Array.isArray(body.units) ? (body.units as string[]) : [],
         aliases: body.aliases as string[] | undefined,
         estimated_shelf_life_days: body.estimated_shelf_life_days as number | null | undefined,
+        // v0.1.3：分类（决定是否按调味品处理）
+        category_id: 'category_id' in body ? (body.category_id as number | null) : null,
       })
       return reply.code(201).send(created)
     },

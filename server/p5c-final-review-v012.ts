@@ -365,8 +365,10 @@ try {
   console.log('\n===== 七、迁移与表结构 =====')
   const tables = (raw.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' and name != '__drizzle_migrations' order by name").all() as Array<{ name: string }>).map((r) => r.name)
   info('业务表', tables.join(', '))
-  ok('业务表 = 7 张', tables.length === 7, `${tables.length}`)
+  // ⚠️ v0.1.3 新增 category 表 → 7 → 8
+  ok('业务表 = 8 张（v0.1.2 的 7 张 + v0.1.3 的 category）', tables.length === 8, `${tables.length}`)
   ok('含 app_settings', tables.includes('app_settings'))
+  ok('含 category（v0.1.3）', tables.includes('category'))
   ok('含 4 张原有表', ['ingredient_definition', 'ingredient_alias', 'ingredient_definition_unit', 'standard_ingredient'].every((t) => tables.includes(t)))
 
   // app_settings 结构正确
@@ -381,7 +383,8 @@ try {
   //    迁移文件的顺序与完整性由「批次二审查」中的 migrate 流程与下方文件清单验证。
   const migrationFiles = readdirSync(drizzleDir).filter((f) => f.endsWith('.sql')).sort()
   info('迁移文件（按字典序）', migrationFiles.join(' → '))
-  ok('迁移文件为 0000~0004 共 5 个', migrationFiles.length === 5, `${migrationFiles.length}`)
+  // ⚠️ v0.1.3 新增 0005_category.sql → 5 → 6
+  ok('迁移文件为 0000~0005 共 6 个', migrationFiles.length === 6, `${migrationFiles.length}`)
   ok('迁移前缀连续', migrationFiles.every((f, i) => f.startsWith(`000${i}_`)),
     migrationFiles.map((f) => f.slice(0, 4)).join(','))
 

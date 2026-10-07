@@ -20,6 +20,8 @@ export type ServiceErrorCode =
   | 'HAS_STOCK'
   | 'UNIT_IN_USE'
   | 'UNIT_NOT_ALLOWED'
+  | 'CATEGORY_IN_USE'
+  | 'CATEGORY_TRANSITION_NOT_ALLOWED'
 
 /**
  * Service 业务错误。
@@ -99,4 +101,35 @@ export function unitInUseError(message: string): ServiceError {
  */
 export function unitNotAllowedError(message: string): ServiceError {
   return new ServiceError('UNIT_NOT_ALLOWED', message)
+}
+
+/**
+ * 分类仍被 ingredient_definition 引用，无法删除（HTTP 409）。
+ *
+ * 规则：只要还有**任何** definition 使用该分类，就拒绝删除。
+ * 绝不级联删除食材、绝不自动移动食材、绝不把 category_id 置 NULL。
+ */
+export function categoryInUseError(message: string): ServiceError {
+  return new ServiceError('CATEGORY_IN_USE', message)
+}
+
+/**
+ * 库存不允许在「调味品」与「普通食材」之间跨类切换（HTTP 409）。
+ *
+ * 规则（v0.1.3 正式确定）：
+ *   普通食材 → 普通食材   ✅
+ *   调味品   → 调味品     ✅
+ *   普通食材 → 调味品     ❌
+ *   调味品   → 普通食材   ❌
+ *
+ * 原因：
+ *   - 普通食材库存有真实 quantity / unit / dates / storage_method 语义
+ *   - 调味品库存使用 B2 sentinel，业务语义是"有 / 无"
+ *   - 不允许通过修改 definition_id 静默重写真实库存数据
+ *   - 不允许让普通库存数量变成 sentinel，也不允许 sentinel 继承真实数量
+ *
+ * 失败必须是**完全原子性的 no-op**（不改任何字段，含 updated_at）。
+ */
+export function categoryTransitionNotAllowedError(message: string): ServiceError {
+  return new ServiceError('CATEGORY_TRANSITION_NOT_ALLOWED', message)
 }

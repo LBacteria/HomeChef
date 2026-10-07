@@ -581,15 +581,279 @@ COMMIT
 
 ---
 
-## 12. 后续阶段
+## 12. 临期状态与排序（v0.1.2）
 
-以下内容**不属于 v0.1**，在后续阶段确定：
+### 12.1 临期状态
 
-- 菜谱、菜谱匹配、推荐
+四种状态，**全部由后端计算**，前端只做文案映射：
+
+| 状态 | 含义 |
+|---|---|
+| `no_expiry` | `expiry_date IS NULL`，无到期日期 |
+| `expired` | 已超过 `expiry_date` |
+| `expiring` | 未过期，且满足临期规则 |
+| `normal` | 未过期，且不满足临期规则 |
+
+**判定顺序（严格）**：
+
+```
+1. expiry_date === null            → no_expiry
+2. today > expiry_date             → expired      ← 永远优先
+3. 未过期 → 按模式判断 expiring / normal
+```
+
+- **`expired` 优先于 `expiring`**：过期就是过期，不会再被判为临期
+- **到期当天不算过期**（`today == expiry_date` → `days_remaining = 0`），归入临期
+
+### 12.2 days 模式
+
+```
+days_remaining <= threshold  →  expiring
+```
+
+`days_remaining` = 从今天到 `expiry_date` 的天数（可为负）。
+阈值使用 `<=`（含等于）。
+
+### 12.3 percentage 模式
+
+把百分比**折算成天数**再比较：
+
+```
+expiring_days = ceil(total_shelf_life_days × threshold / 100)
+days_remaining <= expiring_days  →  expiring
+```
+
+> ⚠️ **不是** `remaining_percentage <= threshold`。
+> 例如总保质期 10 天、阈值 15% ⇒ `ceil(1.5) = 2` 天，剩余 2 天即为临期。
+
+`total_shelf_life_days` 的起点为 `production_date ?? purchase_date`。
+
+### 12.4 返回字段
+
+| 字段 | 说明 |
+|---|---|
+| `expiry_status` | 上述四态之一 |
+| `days_remaining` | 剩余天数，`no_expiry` 时为 `null` |
+| `remaining_percentage` | 剩余百分比，无法计算时为 `null`；**仅用于展示**，不参与状态判定 |
+
+`remaining_percentage` 是展示字段，**不参与临期判断**（判定只用折算天数）。
+
+### 12.5 到期日期来源
+
+| 来源 | 含义 |
+|---|---|
+| `estimated` | 由 `estimated_shelf_life_days` 自动估算 |
+| `manual` | 用户手动填写 |
+| `NULL` | 无到期日期（对应 `no_expiry`） |
+
+**`manual` 永远不会自动变回 `estimated`**：一旦用户手动设置到期日期，
+之后即使修改入库/生产日期，也只**保留原值**，不自动重算。
+
+### 12.6 排序
+
+排序**全部在后端执行**，前端只传参。两个排序功能**完全独立**：
+
+**库存排序**（`stockSortService`）：
+
+| `sort` | 含义 |
+|---|---|
+| `default` | 按临期状态分组：`expired → expiring → normal → no_expiry` |
+| `expiry` | 按剩余天数 |
+| `purchase_date` | 按入库日期 |
+| `name` | 按食材名称 |
+| `quantity` | 按数量 |
+
+`order` 为 `asc` / `desc`。
+
+> **无保质期的记录在两个方向上都排在最后**，不会被当成 0 天参与比较。
+
+**食材库排序**（`definitionSortService`）：
+
+| `sort` | `order` | 含义 |
+|---|---|---|
+| `name` | `asc` | 名称 A → Z（默认） |
+| `name` | `desc` | 名称 Z → A |
+
+排序**不持久化**（不写数据库、不写 localStorage），刷新后回到 A → Z。
+
+两个排序都支持与 `search` / `category_id` 组合使用。
+
+### 12.7 设置
+
+`app_settings` 为单行表，通过 `GET /api/settings` / `PATCH /api/settings` 读写：
+
+| 设置 | 取值 |
+|---|---|
+| `expiry_warning_mode` | `days` / `percentage` |
+| `expiry_warning_threshold` | `days` 模式为整数；`percentage` 模式为 0–100 |
+| `allow_expired_for_recipe` | 布尔（**当前仅保存**，供后续食谱功能使用） |
+
+`PATCH` 会校验**合并后的最终组合**（例如切到 `days` 模式时阈值必须是整数）。
+
+---
+
+## 13. 食材分类与调味品（v0.1.3）
+
+### 13.1 分类模型
+
+```
+category  1 ──── N  ingredient_definition
+```
+
+- 只有**一套**分类机制：`category` 表 + `ingredient_definition.category_id`
+- **不存在** `ingredient_type` / `seasoning_type` / `builtin_category` / `custom_category`
+- 内置分类与用户自定义分类使用**完全相同**的结构
+- 分类名称**唯一**（归一化后判重）
+
+### 13.2 分类不是食材身份
+
+| | 身份 | 可修改 |
+|---|---|---|
+| `ingredient_definition.id` | ✅ **稳定内部 identity**，永不复用 | ❌ |
+| `name` | ❌ 只是显示属性 | ✅ |
+| `category_id` | ❌ 只是归类属性 | ✅ |
+
+- **改名不改变 `id`**
+- **改分类不改变 `id`**
+- 别名与分类都不参与身份判定
+
+### 13.3 19 个默认分类
+
+```
+蔬菜    水果    水产    蛋类    豆制品
+乳制品  主食/谷物  干货/菌菇  冷冻食品  调味品
+其他/饮品
+
+猪肉    牛肉    羊肉    其他畜肉
+鸡肉    鸭肉    鹅肉    其他禽肉
+```
+
+共 **19 个**。
+
+- `食用油` **不再是独立分类** —— 花生油 / 菜籽油 / 橄榄油 / 大豆油 / 玉米油 / 猪油 均归 **`调味品`**
+- `畜肉` 与 `禽肉` **不是最终分类**，已按具体食材拆分到上述细分类
+
+### 13.4 冷冻食品语义
+
+**`冷冻食品` 表示食材本身就是冷冻 / 速冻成品或半成品**，例如：
+
+```
+冷冻饺子  馄饨  汤圆  薯条  鸡块  鱼丸
+冰淇淋    冷冻包子  牛肉丸  薯饼  冷冻鸡翅
+```
+
+> ⚠️ **`冷冻食品` ≠ 储存方式为冷冻。**
+>
+> `牛肉` 即使库存 `storage_method = 冷冻`，分类**仍然是 `牛肉`**。
+> 分类描述「这是什么食材」，储存方式描述「怎么存放」，两者无关。
+
+### 13.5 调味品 = presence-only
+
+调味品**不是数量型库存**，业务语义只有：
+
+```
+有 / 无
+```
+
+**调味品 definition**：
+
+- **不要求** `allowed_units`，可以为**空数组**
+- **不要求** 预计保质期
+- 不使用占位单位伪装
+
+**调味品 inventory** 内部使用 B2 兼容值（见 `DATABASE_DESIGN.md` 第 15.7 节）：
+
+```
+quantity = 0
+unit = "个"
+purchase_date = today
+storage_method = "常温"
+expiry_date = NULL
+expiry_date_source = NULL
+```
+
+> `unit = "个"` 只是**内部 sentinel**，不代表用户实际选择了「个」作为调味品计量单位。
+
+由此推导出的行为：
+
+| 行为 | 说明 |
+|---|---|
+| 不为 sentinel 自动给调味品加 `个` | 调味品的 `allowed_units` 保持为空 |
+| 调味品 → 调味品 切换**跳过** allowed-unit 校验 | sentinel 不参与调味品语义 |
+| 调味品不进临期系统 | `expiry_date = NULL` ⇒ `no_expiry` |
+| 调味品的 `quantity = 0` **仍显示在列表** | 普通食材的 `quantity <= 0` 隐藏规则**不适用于调味品**，反之该规则也**未被放宽** |
+| UI 显示「有」 | 不显示数量 / 单位 / 入库日期 / 生产日期 / 保质期 / 储存方式 |
+| 重复添加同一调味品保持幂等 | 返回已有记录，不新增第二条「有」 |
+
+### 13.6 食材库存的跨类切换
+
+修改库存的 `definition_id` 时：
+
+| 切换 | 结果 |
+|---|---|
+| 普通 → 普通 | ✅ 允许（仍执行普通 unit 校验） |
+| 调味品 → 调味品 | ✅ 允许（**跳过** allowed-unit 校验） |
+| 普通 → 调味品 | ❌ `409 CATEGORY_TRANSITION_NOT_ALLOWED` |
+| 调味品 → 普通 | ❌ `409 CATEGORY_TRANSITION_NOT_ALLOWED` |
+
+**为什么拒绝跨类**：
+
+普通库存携带真实的数量 / 单位 / 日期 / 储存方式；调味品库存是 presence-only。
+两者的字段语义不同，系统**无法猜测**跨类时这些字段应该如何转换
+（把真实数量静默改成 sentinel，或让 sentinel 继承真实数量，都会产生语义错误的库存）。
+因此**直接拒绝，由用户删除后重新添加**。
+
+**失败必须是完全原子性的 no-op**，以下字段**全部保持不变**：
+
+```
+definition_id      quantity           unit
+purchase_date      production_date    expiry_date
+expiry_date_source storage_method     note
+updated_at
+```
+
+### 13.7 分类管理
+
+- 入口位于**设置页**，点击后在**当前 React 应用内**打开 Modal/Dialog
+  （不使用 `window.open`，不打开新窗口 / 新标签页）
+- 支持新建（仅名称，自动 trim）、删除（二次确认）、Escape 关闭、列表滚动
+
+| 操作 | 结果 |
+|---|---|
+| `GET /api/categories` | 列出全部分类（按 `sort_order`） |
+| `POST /api/categories` | 201 / 400（空名称）/ 409（重名） |
+| `DELETE /api/categories/:id` | 204 / 400 / 404 / **409 `CATEGORY_IN_USE`** |
+
+**删除保护**：只要仍有**任何** `ingredient_definition` 引用该分类，就拒绝删除。
+
+- ❌ 不级联删除食材
+- ❌ 不自动移动食材到其他分类
+- ❌ 不把 `category_id` 置 NULL
+- ✅ 删除失败时**原子性保持**（category 表与 definition 表均不变）
+
+---
+
+## 14. 架构原则总结（补充）
+
+在原有 9 条之外，v0.1.2 / v0.1.3 增加：
+
+10. **临期状态由后端计算**，前端只做文案映射，不自行判断日期
+11. **排序由后端执行**，前端只传参，不复制排序规则；库存排序与食材库排序相互独立
+12. **分类不是身份** —— `definition_id` 是唯一稳定 identity
+13. **不猜测用户的真实意图** —— 跨类切换语义无法推断时直接拒绝，而不是替用户决定
+14. **特殊行为由分类推导**（`category === '调味品'`），不引入 `type` 字段
+15. **内部兼容值不下沉到业务语义** —— sentinel 只在存储层，UI 与 API 表达「有 / 无」
+
+---
+
+## 15. 后续阶段
+
+以下内容**尚未实现**，在后续阶段确定：
+
+- 菜谱（Recipe）、菜谱匹配、推荐 ← **v0.2.0 计划**
 - DeepSeek AI 接入
 - 采购清单
 - 消耗历史记录
 - 单位换算
 - 食材定义合并
 - 录入时的名称解析实时预览接口
-- 设置页面扩展
