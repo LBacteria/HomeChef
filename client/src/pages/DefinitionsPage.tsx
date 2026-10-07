@@ -4,7 +4,11 @@ import { deleteDefinition, listDefinitions } from '../api/definitions'
 import { DefinitionEditor } from '../components/DefinitionEditor'
 import DefinitionForm from '../components/DefinitionForm'
 import { createDefinition } from '../api/definitions'
-import type { CreateDefinitionInput, IngredientDefinitionDetail } from '../types/api'
+import type {
+  CreateDefinitionInput,
+  DefinitionSortOrder,
+  IngredientDefinitionDetail,
+} from '../types/api'
 
 /**
  * 食材库页面。
@@ -14,6 +18,12 @@ import type { CreateDefinitionInput, IngredientDefinitionDetail } from '../types
  *   - 列表展示名称、别名、允许单位、预计保质期
  *   - 编辑入口（名称/别名/单位/保质期）
  *   - 删除定义（有库存时后端返回 409 HAS_STOCK）
+ *
+ * v0.1.2 Batch 3：
+ *   - 名称排序（A → Z / Z → A），默认 A → Z
+ *   - 排序由**后端**执行，前端只传参，不复制排序规则
+ *   - 排序与搜索完全兼容（搜索结果同样按当前方向排序）
+ *   - 不持久化排序偏好（刷新后回到 A → Z）
  */
 
 interface Props {
@@ -28,6 +38,12 @@ export default function DefinitionsPage({ onDefinitionsChanged }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
+  /**
+   * 名称排序方向。
+   * ⚠️ 不持久化：刷新页面回到默认的 'asc'（A → Z）。
+   */
+  const [sortOrder, setSortOrder] = useState<DefinitionSortOrder>('asc')
+
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState<IngredientDefinitionDetail | null>(null)
   const [deleting, setDeleting] = useState<IngredientDefinitionDetail | null>(null)
@@ -36,13 +52,13 @@ export default function DefinitionsPage({ onDefinitionsChanged }: Props) {
   const requestSeq = useRef(0)
 
   const load = useCallback(
-    async (search: string) => {
+    async (search: string, order: DefinitionSortOrder) => {
       const seq = ++requestSeq.current
       setLoading(true)
       setLoadError(null)
 
       try {
-        const data = await listDefinitions(search)
+        const data = await listDefinitions(search, order)
         // 只接受最后一次请求的结果
         if (seq === requestSeq.current) {
           setItems(data)
@@ -61,13 +77,13 @@ export default function DefinitionsPage({ onDefinitionsChanged }: Props) {
   )
 
   useEffect(() => {
-    void load(query)
-  }, [load, query])
+    void load(query, sortOrder)
+  }, [load, query, sortOrder])
 
   const refresh = useCallback(async () => {
-    await load(query)
+    await load(query, sortOrder)
     onDefinitionsChanged?.()
-  }, [load, query, onDefinitionsChanged])
+  }, [load, query, sortOrder, onDefinitionsChanged])
 
   async function handleCreate(data: CreateDefinitionInput) {
     await createDefinition(data)
@@ -105,6 +121,21 @@ export default function DefinitionsPage({ onDefinitionsChanged }: Props) {
         placeholder="搜索食材（支持名称与别名）…"
       />
 
+      {/* 名称排序：只提供 A → Z / Z → A 两种方向 */}
+      <div className="sort-controls">
+        <label className="sort-field">
+          排序
+          <select
+            value={sortOrder}
+            disabled={loading}
+            onChange={(e) => setSortOrder(e.target.value as DefinitionSortOrder)}
+          >
+            <option value="asc">名称 A → Z</option>
+            <option value="desc">名称 Z → A</option>
+          </select>
+        </label>
+      </div>
+
       {actionError && (
         <div className="action-error">
           <p>{actionError}</p>
@@ -119,7 +150,7 @@ export default function DefinitionsPage({ onDefinitionsChanged }: Props) {
       {!loading && loadError && (
         <div className="load-error">
           <p>加载失败：{loadError}</p>
-          <button type="button" onClick={() => void load(query)}>
+          <button type="button" onClick={() => void load(query, sortOrder)}>
             重试
           </button>
         </div>

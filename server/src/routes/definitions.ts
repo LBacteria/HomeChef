@@ -16,6 +16,15 @@ import {
   updateDefinition,
 } from '../services/definitionService.js'
 import { UNITS } from '../db/schema.js'
+import {
+  DEFAULT_DEFINITION_ORDER,
+  DEFAULT_DEFINITION_SORT,
+  DEFINITION_SORT_FIELDS,
+  DEFINITION_SORT_ORDERS,
+  isValidDefinitionSortField,
+  isValidDefinitionSortOrder,
+  sortDefinitions,
+} from '../services/definitionSortService.js'
 import { errorBody, parsePositiveIntId } from './http.js'
 
 /**
@@ -113,15 +122,26 @@ export function registerDefinitionRoutes(app: FastifyInstance): void {
    *
    * ⚠️ search 使用 searchDefinitions()，是**包含匹配**（substring），
    *    不是精确解析。绝不用 resolveDefinitionByName。
+   *
+   * v0.1.2 Batch 3 增加名称排序：
+   *   ?sort=name&order=asc|desc   （默认 name asc，即 A → Z）
+   *
+   * ⚠️ sort / order 均为**白名单**，非法值一律 400。
+   *    排序在搜索之后进行，与 search 完全兼容。
+   *    搜索逻辑本身未做任何改动。
    */
-  app.get<{ Querystring: { search?: string } }>(
+  app.get<{ Querystring: { search?: string; sort?: string; order?: string } }>(
     '/api/definitions',
     {
       schema: {
         querystring: {
           type: 'object',
           additionalProperties: false,
-          properties: { search: { type: 'string' } },
+          properties: {
+            search: { type: 'string' },
+            sort: { type: 'string', enum: [...DEFINITION_SORT_FIELDS] },
+            order: { type: 'string', enum: [...DEFINITION_SORT_ORDERS] },
+          },
         },
       },
     },
@@ -129,8 +149,28 @@ export function registerDefinitionRoutes(app: FastifyInstance): void {
       const search = request.query.search
       const items = search === undefined ? searchDefinitions('') : searchDefinitions(search)
 
+      // Service 层再次校验（不只依赖 JSON Schema）
+      const sortField = request.query.sort ?? DEFAULT_DEFINITION_SORT
+      const order = request.query.order ?? DEFAULT_DEFINITION_ORDER
+
+      if (!isValidDefinitionSortField(sortField) || !isValidDefinitionSortOrder(order)) {
+        return reply
+          .code(400)
+          .send(
+            errorBody(
+              'VALIDATION_ERROR',
+              `非法排序参数：sort=${String(sortField)}，order=${String(order)}。` +
+                `允许的 sort：${DEFINITION_SORT_FIELDS.join('、')}；` +
+                `允许的 order：${DEFINITION_SORT_ORDERS.join('、')}`,
+            ),
+          )
+      }
+
+      // 排序只改变展示顺序，不修改任何数据
+      const sorted = sortDefinitions(items, order)
+
       // 附带每个定义的别名与允许单位，便于前端展示
-      const enriched = items.map((d) => ({
+      const enriched = sorted.map((d) => ({
         ...d,
         aliases: listDefinitionAliases(d.id),
         allowed_units: listAllowedUnits(d.id),

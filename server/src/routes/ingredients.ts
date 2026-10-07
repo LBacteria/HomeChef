@@ -10,6 +10,18 @@ import {
   updateStock,
 } from '../services/standardIngredientService.js'
 import { errorBody, parsePositiveIntId } from './http.js'
+import { todayDateString } from '../services/dates.js'
+import { evaluateExpiryStatus } from '../services/expiryStatusService.js'
+import { getSettings } from '../services/settingsService.js'
+import {
+  SORT_FIELDS,
+  SORT_ORDERS,
+  buildSortableList,
+  isValidSortField,
+  isValidSortOrder,
+  sortStock,
+} from '../services/stockSortService.js'
+import { listDefinitions } from '../services/definitionService.js'
 
 /**
  * 库存记录 API
@@ -85,21 +97,88 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
    *
    * 默认隐藏 quantity = 0 的记录（数据库仍保留）。
    * 支持 ?includeZero=true 显示全部（便于调试与管理）。
+   *
+   * 排序（v0.1.2）：
+   *   ?sort=default|expiry|purchase_date|name|quantity
+   *   ?order=asc|desc
+   *
+   * ⚠️ sort / order 均为**白名单**，非法值一律 400。
+   *    绝不把用户输入拼进 ORDER BY。
    */
-  app.get<{ Querystring: { includeZero?: string } }>(
+  app.get<{ Querystring: { includeZero?: string; sort?: string; order?: string } }>(
     '/api/ingredients',
     {
       schema: {
         querystring: {
           type: 'object',
           additionalProperties: false,
-          properties: { includeZero: { type: 'string' } },
+          properties: {
+            includeZero: { type: 'string' },
+            sort: { type: 'string', enum: [...SORT_FIELDS] },
+            order: { type: 'string', enum: [...SORT_ORDERS] },
+          },
         },
       },
     },
     async (request, reply) => {
       const includeZero = request.query.includeZero === 'true'
-      return reply.code(200).send(includeZero ? listStock() : listStockWithQuantity())
+      const rows = includeZero ? listStock() : listStockWithQuantity()
+
+      const settings = getSettings()
+      const rule = {
+        mode: settings.expiry_warning_mode,
+        threshold: settings.expiry_warning_threshold,
+      }
+      const today = todayDateString()
+
+      // 名称映射：排序需要食材默认名称（不用 alias）
+      const nameMap = new Map<number, string>()
+      for (const def of listDefinitions()) {
+        nameMap.set(def.id, def.name)
+      }
+
+      const sortable = buildSortableList(rows, rule, today, (id) => nameMap.get(id) ?? '')
+
+      const field = request.query.sort ?? 'default'
+      const order = request.query.order ?? 'asc'
+
+      // Service 层再次校验（不只依赖 schema）
+      if (!isValidSortField(field) || !isValidSortOrder(order)) {
+        return reply
+          .code(400)
+          .send(
+            errorBody(
+              'VALIDATION_ERROR',
+              `非法排序参数：sort=${String(field)}，order=${String(order)}。` +
+                `允许的 sort：${SORT_FIELDS.join('、')}；允许的 order：${SORT_ORDERS.join('、')}`,
+            ),
+          )
+      }
+
+      const sorted = sortStock(sortable, field, order)
+
+      // 附加**动态计算**的临期状态（不存库）。
+      // 兼容性：只是增加字段，不改变原有字段与结构。
+      const enriched = sorted.map((item) => {
+        const evaluation = evaluateExpiryStatus(
+          {
+            expiry_date: item.row.expiry_date,
+            purchase_date: item.row.purchase_date,
+            production_date: item.row.production_date,
+          },
+          rule,
+          today,
+        )
+        return {
+          ...item.row,
+          definition_name: item.name,
+          expiry_status: evaluation.status,
+          days_remaining: evaluation.days_remaining,
+          remaining_percentage: evaluation.remaining_percentage,
+        }
+      })
+
+      return reply.code(200).send(enriched)
     },
   )
 

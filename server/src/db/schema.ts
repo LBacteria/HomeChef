@@ -382,6 +382,88 @@ export const seedIngredientMap = sqliteTable(
 )
 
 /* ============================================================
+ * v0.1.2 应用设置
+ *
+ * 单行设置表（id 恒为 1）。
+ * 本批次只有 3 个设置，字段类型明确，因此不使用 key-value 结构。
+ * ============================================================ */
+
+/** 临期判断模式 */
+export const EXPIRY_WARNING_MODES = ['days', 'percentage'] as const
+
+export type ExpiryWarningMode = (typeof EXPIRY_WARNING_MODES)[number]
+
+/** 临期状态（**动态计算**，绝不存库） */
+export const EXPIRY_STATUSES = ['no_expiry', 'normal', 'expiring', 'expired'] as const
+
+export type ExpiryStatus = (typeof EXPIRY_STATUSES)[number]
+
+/**
+ * 应用设置。
+ *
+ * ⚠️ 只有一行（id = 1），由 CHECK 约束强制。
+ * ⚠️ allow_expired_for_recipe 用 INTEGER 0/1 存储（SQLite 无原生 BOOLEAN）。
+ */
+export const appSettings = sqliteTable(
+  'app_settings',
+  {
+    id: integer('id').primaryKey(),
+
+    /** days | percentage */
+    expiry_warning_mode: text('expiry_warning_mode').notNull(),
+
+    /**
+     * 临期阈值。
+     *   days 模式：整数天数，>= 0
+     *   percentage 模式：百分比，0–100
+     *
+     * 用 REAL 存储以同时兼容两种模式（days 模式下 Service 强制为整数）。
+     */
+    expiry_warning_threshold: real('expiry_warning_threshold').notNull(),
+
+    /** 是否允许食谱推荐考虑已过期食材。0 / 1 */
+    allow_expired_for_recipe: integer('allow_expired_for_recipe').notNull(),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [
+    // 单行约束
+    check('app_settings_single_row', sql`${table.id} = 1`),
+
+    // 模式枚举
+    check(
+      'expiry_warning_mode_in_enum',
+      sql`${table.expiry_warning_mode} in (${sql.raw(sqlLiteralList(EXPIRY_WARNING_MODES))})`,
+    ),
+
+    // 阈值非负
+    check(
+      'expiry_warning_threshold_non_negative',
+      sql`${table.expiry_warning_threshold} >= 0`,
+    ),
+
+    // percentage 模式阈值 0–100。
+    // ⚠️ 用显式 CASE 返回 0/1，避免 SQL 三值逻辑绕过
+    //    （见 standard_ingredient 的 expiry_source_pairing 教训）。
+    check(
+      'expiry_warning_threshold_percentage_range',
+      sql`case
+        when ${table.expiry_warning_mode} = 'percentage'
+          then case when ${table.expiry_warning_threshold} <= 100 then 1 else 0 end
+        else 1
+      end`,
+    ),
+
+    // 布尔字段只能是 0/1
+    check(
+      'allow_expired_for_recipe_boolean',
+      sql`${table.allow_expired_for_recipe} in (0, 1)`,
+    ),
+  ],
+)
+
+/* ============================================================
  * 类型导出
  * ============================================================ */
 
@@ -397,3 +479,5 @@ export type SeedHistory = typeof seedHistory.$inferSelect
 export type NewSeedHistory = typeof seedHistory.$inferInsert
 export type SeedIngredientMap = typeof seedIngredientMap.$inferSelect
 export type NewSeedIngredientMap = typeof seedIngredientMap.$inferInsert
+export type AppSettings = typeof appSettings.$inferSelect
+export type NewAppSettings = typeof appSettings.$inferInsert

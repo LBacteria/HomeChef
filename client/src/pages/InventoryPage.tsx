@@ -11,7 +11,14 @@ import {
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog'
 import ConsumeDialog from '../components/ConsumeDialog'
 import InventoryForm, { type InventoryFormValue } from '../components/InventoryForm'
-import type { IngredientDefinitionDetail, InventoryRecord } from '../types/api'
+import SortControls from '../components/SortControls'
+import type {
+  ExpiryStatus,
+  IngredientDefinitionDetail,
+  InventoryRecord,
+  SortField,
+  SortOrder,
+} from '../types/api'
 import { describeExpiry, formatQuantityWithUnit, groupByDefinition } from '../format'
 
 /**
@@ -35,17 +42,85 @@ type Dialog =
   | { kind: 'consume'; record: InventoryRecord }
   | { kind: 'delete'; record: InventoryRecord }
 
+/**
+ * 临期状态的展示徽章。
+ *
+ * ⚠️ 状态来自**后端**（record.expiry_status / days_remaining），
+ *    前端只做文案映射，绝不自行判断日期。
+ *
+ * 文案规则（v0.1.2）：
+ *   已过期（1 天以上）→ 「已过期 · N 天」
+ *   今天到期（剩余 0）→ 「临期 · 今天到期」（**不显示"还剩 0 天"**）
+ *   临期且剩余 >0   → 「临期 · 还剩 N 天」
+ *   正常            → 不显示徽章
+ *   无保质期        → 弱化显示「无保质期」
+ *
+ * ⚠️ 已过期天数取绝对值，**绝不显示负数**。
+ */
+function expiryStatusBadge(
+  status: ExpiryStatus,
+  daysRemaining: number | null,
+): { text: string; className: string } | null {
+  switch (status) {
+    case 'expired': {
+      // daysRemaining 为负数，取绝对值展示
+      const overdueDays = daysRemaining === null ? null : Math.abs(daysRemaining)
+      return {
+        text: overdueDays === null ? '已过期' : `已过期 · ${overdueDays} 天`,
+        className: 'expiry-badge-expired',
+      }
+    }
+
+    case 'expiring': {
+      if (daysRemaining === null) {
+        return { text: '临期', className: 'expiry-badge-expiring' }
+      }
+      // 今天正好到期 → 不显示「还剩 0 天」
+      if (daysRemaining === 0) {
+        return { text: '临期 · 今天到期', className: 'expiry-badge-expiring' }
+      }
+      return {
+        text: `临期 · 还剩 ${daysRemaining} 天`,
+        className: 'expiry-badge-expiring',
+      }
+    }
+
+    case 'no_expiry':
+      // 弱化显示，不作为警告
+      return { text: '无保质期', className: 'expiry-badge-none' }
+
+    case 'normal':
+    default:
+      return null
+  }
+}
+
 interface Props {
   /** 由父组件传入，用于触发定义刷新（定义增删后库存页需要最新列表） */
   definitionsVersion?: number
+  /**
+   * 临期设置变化计数。
+   * 设置变化后需要重新拉取库存 —— 临期状态由**后端按最新设置计算**，
+   * 前端不自行重算。
+   */
+  settingsVersion?: number
 }
 
-export default function InventoryPage({ definitionsVersion = 0 }: Props) {
+export default function InventoryPage({ definitionsVersion = 0, settingsVersion = 0 }: Props) {
   const [records, setRecords] = useState<InventoryRecord[]>([])
   const [definitions, setDefinitions] = useState<IngredientDefinitionDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
+
+  /**
+   * 排序状态。
+   *
+   * ⚠️ 只保存"用户选了哪个排序"，**实际排序在后端完成**。
+   *    本批次不持久化排序偏好（不写数据库、不写 localStorage）。
+   */
+  const [sortField, setSortField] = useState<SortField>('default')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
 
   /** 定义 ID → 定义 的映射（用于显示名称与可用单位） */
   const definitionMap = useMemo(() => {
@@ -59,8 +134,11 @@ export default function InventoryPage({ definitionsVersion = 0 }: Props) {
     setLoadError(null)
 
     try {
-      // 并行拉取库存与定义
-      const [stock, defs] = await Promise.all([listInventory(), listDefinitions()])
+      // 排序由后端执行：把当前排序选择作为查询参数传入
+      const [stock, defs] = await Promise.all([
+        listInventory({ sort: sortField, order: sortOrder }),
+        listDefinitions(),
+      ])
       setRecords(stock)
       setDefinitions(defs)
     } catch (error) {
@@ -68,11 +146,11 @@ export default function InventoryPage({ definitionsVersion = 0 }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [sortField, sortOrder])
 
   useEffect(() => {
     void load()
-  }, [load, definitionsVersion])
+  }, [load, definitionsVersion, settingsVersion])
 
   function closeDialog() {
     setDialog({ kind: 'none' })
@@ -140,6 +218,17 @@ export default function InventoryPage({ definitionsVersion = 0 }: Props) {
         </button>
       </div>
 
+      {/* 排序：只选择方式，实际排序由后端执行 */}
+      <SortControls
+        field={sortField}
+        order={sortOrder}
+        disabled={loading}
+        onChange={(f, o) => {
+          setSortField(f)
+          setSortOrder(o)
+        }}
+      />
+
       {loading && <p className="status">加载中...</p>}
 
       {!loading && loadError && (
@@ -182,11 +271,16 @@ export default function InventoryPage({ definitionsVersion = 0 }: Props) {
                 <ul className="record-list">
                   {group.records.map((record) => {
                     const expiry = describeExpiry(record)
+                    // ⚠️ 临期状态由**后端**计算，前端只负责展示
+                    const badge = expiryStatusBadge(record.expiry_status, record.days_remaining)
                     return (
                       <li key={record.id} className="record-item">
                         <div className="record-main">
                           <p className="record-quantity">
                             {formatQuantityWithUnit(record.quantity, record.unit)}
+                            {badge && (
+                              <span className={`expiry-badge ${badge.className}`}>{badge.text}</span>
+                            )}
                           </p>
 
                           <p className="record-meta">
@@ -196,9 +290,19 @@ export default function InventoryPage({ definitionsVersion = 0 }: Props) {
                           </p>
 
                           {expiry && (
-                            <p className={expiry.overdue ? 'record-meta overdue' : 'record-meta'}>
+                            <p
+                              className={
+                                record.expiry_status === 'expired'
+                                  ? 'record-meta overdue'
+                                  : 'record-meta'
+                              }
+                            >
                               {expiry.label}：{expiry.date}
-                              {expiry.overdue && <span className="overdue-badge">已超过预计日期</span>}
+                              {record.days_remaining !== null && record.days_remaining >= 0 && (
+                                <span className="hint-inline">
+                                  　剩余 {record.days_remaining} 天
+                                </span>
+                              )}
                             </p>
                           )}
 

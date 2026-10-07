@@ -2,6 +2,8 @@ import {
   type ConsumeInventoryInput,
   type CreateInventoryInput,
   type InventoryRecord,
+  type SortField,
+  type SortOrder,
   type UpdateInventoryInput,
 } from '../types/api'
 import { request } from './definitions'
@@ -13,16 +15,30 @@ import { request } from './definitions'
  *    不是 definition ID。
  */
 
+export interface ListInventoryOptions {
+  /** 是否包含 0 数量记录（调试用） */
+  includeZero?: boolean
+  /** 排序字段（后端白名单） */
+  sort?: SortField
+  /** 排序方向（后端白名单） */
+  order?: SortOrder
+}
+
 /**
  * 库存列表。
  *
  * 默认由后端隐藏 quantity = 0 的记录。
  *
- * @param includeZero 是否包含 0 数量记录（调试用）
+ * ⚠️ 排序由**后端**执行：仅传参，不在前端重排。
  */
-export function listInventory(includeZero = false): Promise<InventoryRecord[]> {
-  const query = includeZero ? '?includeZero=true' : ''
-  return request<InventoryRecord[]>(`/ingredients${query}`)
+export function listInventory(options: ListInventoryOptions = {}): Promise<InventoryRecord[]> {
+  const params = new URLSearchParams()
+  if (options.includeZero) params.set('includeZero', 'true')
+  if (options.sort) params.set('sort', options.sort)
+  if (options.order) params.set('order', options.order)
+
+  const query = params.toString()
+  return request<InventoryRecord[]>(`/ingredients${query ? `?${query}` : ''}`)
 }
 
 /** 获取单条库存记录（0 数量也能查到） */

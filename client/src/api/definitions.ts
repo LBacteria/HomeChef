@@ -2,6 +2,7 @@ import {
   ApiError,
   type Alias,
   type CreateDefinitionInput,
+  type DefinitionSortOrder,
   type IngredientDefinition,
   type IngredientDefinitionDetail,
   type UpdateDefinitionInput,
@@ -70,13 +71,25 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
  *
  * ⚠️ search 是**后端 substring 包含匹配**（名称 + 别名），
  *    前端不做任何过滤或匹配逻辑。
+ *
+ * ⚠️ 排序同样由**后端**执行（v0.1.2 Batch 3）：
+ *    前端只传参，不复制排序规则。
+ *
+ * @param search 搜索词（为空则列出全部）
+ * @param order  名称排序方向，默认 asc（A → Z）
  */
-export function listDefinitions(search?: string): Promise<IngredientDefinitionDetail[]> {
-  const query =
-    search !== undefined && search.trim().length > 0
-      ? `?search=${encodeURIComponent(search.trim())}`
-      : ''
-  return request<IngredientDefinitionDetail[]>(`/definitions${query}`)
+export function listDefinitions(
+  search?: string,
+  order: DefinitionSortOrder = 'asc',
+): Promise<IngredientDefinitionDetail[]> {
+  const params = new URLSearchParams()
+  if (search !== undefined && search.trim().length > 0) {
+    params.set('search', search.trim())
+  }
+  params.set('sort', 'name')
+  params.set('order', order)
+
+  return request<IngredientDefinitionDetail[]>(`/definitions?${params.toString()}`)
 }
 
 /** 获取单个定义（含 aliases 与 allowed_units） */

@@ -109,7 +109,47 @@ export interface InventoryRecord {
   note: string | null
   created_at: string
   updated_at: string
+
+  /* ------------------------------------------------------------
+   * 以下字段由后端**动态计算**，不存数据库。
+   * 前端只负责展示，绝不自行计算临期状态。
+   * ------------------------------------------------------------ */
+
+  /** 临期状态 */
+  expiry_status: ExpiryStatus
+  /** 距到期日剩余天数（可为负）；no_expiry 时为 null */
+  days_remaining: number | null
+  /** 剩余保质期百分比；无法计算时为 null */
+  remaining_percentage: number | null
+  /** 食材默认名称（后端随列表返回，便于按名称排序与展示） */
+  definition_name?: string
 }
+
+/**
+ * 库存排序字段（与后端白名单一致）。
+ *
+ * ⚠️ 仅用于组装查询参数；**排序计算完全在后端**。
+ */
+export type SortField = 'default' | 'expiry' | 'purchase_date' | 'name' | 'quantity'
+
+/** 排序方向（与后端白名单一致） */
+export type SortOrder = 'asc' | 'desc'
+
+/* ============================================================
+ * 食材库排序（v0.1.2 Batch 3）
+ *
+ * ⚠️ 与库存排序是**两个独立功能**，类型也分开定义。
+ * ============================================================ */
+
+/** 食材库允许的排序字段（只有名称） */
+export type DefinitionSortField = 'name'
+
+/**
+ * 食材库排序方向。
+ *   asc  → 名称 A → Z
+ *   desc → 名称 Z → A
+ */
+export type DefinitionSortOrder = 'asc' | 'desc'
 
 /** 创建库存记录 */
 export interface CreateInventoryInput {
@@ -152,6 +192,40 @@ export interface UpdateInventoryInput {
 /** 消耗库存 */
 export interface ConsumeInventoryInput {
   amount: number
+}
+
+/* ============================================================
+ * 应用设置
+ * ============================================================ */
+
+/** 临期判断模式 */
+export type ExpiryWarningMode = 'days' | 'percentage'
+
+/** 临期状态（后端动态计算） */
+export type ExpiryStatus = 'no_expiry' | 'normal' | 'expiring' | 'expired'
+
+/**
+ * 应用设置。
+ *
+ * ⚠️ 默认值由**后端**决定，前端不得自行假定默认值。
+ *    首次读取时直接使用后端返回值即可。
+ */
+export interface AppSettings {
+  expiry_warning_mode: ExpiryWarningMode
+  /** days 模式为整数天数；percentage 模式为 0–100 的百分比 */
+  expiry_warning_threshold: number
+  /**
+   * 是否允许食谱推荐考虑已过期食材。
+   * v0.1.2 仅保存该设置，食谱功能尚未实现。
+   */
+  allow_expired_for_recipe: boolean
+}
+
+/** 更新设置（部分更新） */
+export interface UpdateSettingsInput {
+  expiry_warning_mode?: ExpiryWarningMode
+  expiry_warning_threshold?: number
+  allow_expired_for_recipe?: boolean
 }
 
 /* ============================================================
