@@ -10,6 +10,7 @@ import {
 } from '../db/schema.js'
 import type { IngredientDefinition, IngredientDefinitionUnit, Unit } from '../db/schema.js'
 import {
+  categoryTransitionNotAllowedError,
   definitionNotFoundError,
   duplicateNameError,
   hasStockError,
@@ -54,16 +55,27 @@ function assertValidUnit(unit: string): asserts unit is Unit {
  * 数据库有两张表各自的 UNIQUE 约束，但**无法跨表强制**，
  * 因此这条规则完全由 Service 保证。
  *
+ * ⚠️ 可选参数 queryable 用于在**事务内**显式使用事务对象
+ *    （与 listAllowedUnits / assertCategoryChangeAllowed 同一模式）。
+ *    默认仍为 db，现有调用方无需改动。
+ *
  * @param normalized 归一化后的名称
- * @param excludeDefinitionId 修改 definition 名称时排除自己
- * @param excludeAliasId 修改 alias 时排除自己
+ * @param options.excludeDefinitionId 修改 definition 名称时排除自己
+ * @param options.excludeAliasId 修改 alias 时排除自己
+ * @param options.queryable 查询对象（事务内应传 tx）
  */
 export function assertNameAvailableAcrossTables(
   normalized: string,
-  options: { excludeDefinitionId?: number; excludeAliasId?: number } = {},
+  options: {
+    excludeDefinitionId?: number
+    excludeAliasId?: number
+    queryable?: Pick<typeof db, 'select'>
+  } = {},
 ): void {
+  const q = options.queryable ?? db
+
   // 1. 是否被某个 definition 的默认名称占用
-  const byDefinition = db
+  const byDefinition = q
     .select()
     .from(ingredientDefinition)
     .where(eq(ingredientDefinition.name_normalized, normalized))
@@ -84,7 +96,7 @@ export function assertNameAvailableAcrossTables(
           ne(ingredientAlias.id, options.excludeAliasId),
         )
 
-  const byAlias = db.select().from(ingredientAlias).where(aliasCondition).get()
+  const byAlias = q.select().from(ingredientAlias).where(aliasCondition).get()
 
   if (byAlias) {
     throw duplicateNameError(`名称已被别名占用：${byAlias.alias}（归一化名称：${normalized}）`)
@@ -110,9 +122,19 @@ export function getDefinitionById(id: number): IngredientDefinition {
   return found
 }
 
-/** 查询某定义的允许单位 */
-export function listAllowedUnits(definitionId: number): string[] {
-  const rows = db
+/**
+ * 查询某定义的允许单位。
+ *
+ * ⚠️ 可选参数 queryable 用于在**事务内**显式使用事务对象，
+ *    避免在事务回调中误用模块级 db（两者类型相同，写法与
+ *    assertCategoryChangeAllowed 的 Pick<typeof db, 'select'> 保持一致）。
+ *    默认仍为 db，现有调用方无需改动。
+ */
+export function listAllowedUnits(
+  definitionId: number,
+  queryable: Pick<typeof db, 'select'> = db,
+): string[] {
+  const rows = queryable
     .select()
     .from(ingredientDefinitionUnit)
     .where(eq(ingredientDefinitionUnit.definition_id, definitionId))
@@ -250,15 +272,20 @@ export function createDefinition(input: CreateDefinitionInput): IngredientDefini
 export interface UpdateDefinitionInput {
   name?: string
   estimated_shelf_life_days?: number | null
+  /** 所属分类（v0.1.4）；null 表示清空分类 */
+  category_id?: number | null
 }
 
 /**
- * 更新食材定义（名称、默认预估保质期）。
+ * 更新食材定义（名称、默认预估保质期、分类）。
  *
  * ⚠️ 修改 estimated_shelf_life_days **只影响以后新建的库存记录**，
  *    绝不自动修改已有库存记录。
  *
- * @throws ServiceError DEFINITION_NOT_FOUND / VALIDATION_ERROR / DUPLICATE_NAME
+ * ⚠️ v0.1.4：分类变更的完整规则见 assertCategoryChangeAllowed。
+ *
+ * @throws ServiceError DEFINITION_NOT_FOUND / VALIDATION_ERROR /
+ *                      DUPLICATE_NAME / CATEGORY_TRANSITION_NOT_ALLOWED
  */
 export function updateDefinition(id: number, input: UpdateDefinitionInput): IngredientDefinition {
   const current = getDefinitionById(id)
@@ -277,6 +304,21 @@ export function updateDefinition(id: number, input: UpdateDefinitionInput): Ingr
     assertNameAvailableAcrossTables(nextNameNormalized, { excludeDefinitionId: id })
   }
 
+  // ---- 分类变更（v0.1.4）----
+  //
+  // 校验必须在写入之前完成，且「检查库存引用」与「更新」放在**同一个事务**里，
+  // 避免检查通过后、写入前有库存插入造成不一致。
+  let nextCategoryId = current.category_id
+
+  if (input.category_id !== undefined) {
+    nextCategoryId = input.category_id
+
+    if (nextCategoryId !== null) {
+      // 分类必须存在（不存在 → 404 DEFINITION_NOT_FOUND 语义由 getCategoryById 抛出）
+      getCategoryById(nextCategoryId)
+    }
+  }
+
   let nextShelfLife = current.estimated_shelf_life_days
   if (input.estimated_shelf_life_days !== undefined) {
     const v = input.estimated_shelf_life_days
@@ -288,19 +330,103 @@ export function updateDefinition(id: number, input: UpdateDefinitionInput): Ingr
     nextShelfLife = v
   }
 
-  const updated = db
-    .update(ingredientDefinition)
-    .set({
-      name: nextName,
-      name_normalized: nextNameNormalized,
-      estimated_shelf_life_days: nextShelfLife,
-      updated_at: timestamp,
-    })
-    .where(eq(ingredientDefinition.id, id))
-    .returning()
-    .get()
+  // ---- 分类变更的跨类保护 + 实际写入（同一事务）----
+  //
+  // 规则（v0.1.4，用户确认）：
+  //   1. 普通食材之间允许改分类，**即使已有库存**也不禁止
+  //   2. 跨越「普通食材 ↔ 调味品」边界时：
+  //        - 只要存在**任何**库存记录（含 quantity = 0）→ 409 CATEGORY_TRANSITION_NOT_ALLOWED
+  //        - 完全没有库存记录 → 允许转换
+  //   3. 调味品 → 普通食材时，普通食材必须有**至少 1 个**允许单位
+  //        （调味品合法地允许 0 个单位，但普通食材不允许 0 单位，
+  //          否则会产生绕过 createDefinition 校验的非法状态）
+  //   4. 检查与写入必须在同一事务内，避免检查通过后有库存插入
+  //
+  // ⚠️ 不得重算任何已有库存的到期日期 —— 本函数只改 definition 行，
+  //    从不触碰 standard_ingredient。
+  // ⚠️ 不自动添加/删除单位。
+  return db.transaction((tx) => {
+    if (nextCategoryId !== current.category_id) {
+      // 先查跨类（有库存 → 409），再查单位要求
+      assertCategoryChangeAllowed(
+        tx,
+        id,
+        current.category_id,
+        nextCategoryId,
+      )
 
-  return updated
+      // 调味品 → 普通食材：普通食材必须至少有一个允许单位（E1）
+      if (
+        isSeasoningCategory(current.category_id) &&
+        !isSeasoningCategory(nextCategoryId)
+      ) {
+        const unitCount = listAllowedUnits(id, tx).length
+        if (unitCount === 0) {
+          throw validationError(
+            '该食材目前没有任何允许单位，无法改为普通食材。' +
+              '请先为它添加至少一个单位，再修改分类。',
+          )
+        }
+      }
+    }
+
+    return tx
+      .update(ingredientDefinition)
+      .set({
+        name: nextName,
+        name_normalized: nextNameNormalized,
+        estimated_shelf_life_days: nextShelfLife,
+        category_id: nextCategoryId,
+        updated_at: timestamp,
+      })
+      .where(eq(ingredientDefinition.id, id))
+      .returning()
+      .get()
+  })
+}
+
+/**
+ * 分类变更的跨类保护（v0.1.4）。
+ *
+ * 只在「普通食材 ↔ 调味品」边界上生效；普通食材之间互相改分类一律放行。
+ *
+ * ⚠️ 库存检查**不区分数量**：`quantity = 0` 的记录同样算「存在库存」，
+ *    因此不能用 `quantity > 0` 过滤。
+ *
+ * ⚠️ 参数类型取 Pick<typeof db, 'select'>，这样 db 与 db.transaction 传入的 tx
+ *    都能接受（与 standardIngredientService 的 BatchQueryable 同一做法）。
+ *
+ * @throws ServiceError CATEGORY_TRANSITION_NOT_ALLOWED
+ */
+function assertCategoryChangeAllowed(
+  tx: Pick<typeof db, 'select'>,
+  definitionId: number,
+  fromCategoryId: number | null,
+  toCategoryId: number | null,
+): void {
+  const fromIsSeasoning = isSeasoningCategory(fromCategoryId)
+  const toIsSeasoning = isSeasoningCategory(toCategoryId)
+
+  // 同侧（普通 → 普通，或调味品 → 调味品）：允许
+  if (fromIsSeasoning === toIsSeasoning) {
+    return
+  }
+
+  // 跨类：只要有任何库存记录就拒绝
+  const stockCount = tx
+    .select()
+    .from(standardIngredient)
+    .where(eq(standardIngredient.definition_id, definitionId))
+    .all().length
+
+  if (stockCount > 0) {
+    const from = fromIsSeasoning ? '调味品' : '普通食材'
+    const to = toIsSeasoning ? '调味品' : '普通食材'
+    throw categoryTransitionNotAllowedError(
+      `「${from}」与「${to}」之间不能切换分类：该食材下还有 ${stockCount} 条库存记录` +
+        `（含数量为 0 的记录）。请先删除这些库存记录，再修改分类。`,
+    )
+  }
 }
 
 /**
@@ -696,5 +822,342 @@ export function assertUnitAllowed(definitionId: number, unit: string): void {
     throw unitNotAllowedError(
       `单位「${unit}」不是该食材的允许单位。允许：${allowed.join('、')}`,
     )
+  }
+}
+
+/* ============================================================
+ * 统一保存（v0.1.4 第二批）
+ *
+ * 背景：前端「食材快捷编辑」有多个可编辑字段
+ *       （名称 / 分类 / 保质期 / 别名 / 单位 / 设为默认）。
+ *       若前端用多个独立请求提交，会出现「部分成功」：
+ *       例如设为默认已生效、但后续别名请求失败，用户重试时
+ *       会用到已被删除的 alias id → 404，陷入无法恢复的状态。
+ *
+ * 本函数把全部改动放进**同一个数据库事务**：
+ *   要么全部成功，要么全部回滚 —— 不存在部分保存。
+ * ============================================================ */
+
+/** 别名草稿项：id 为 null 表示新增 */
+export interface AliasDraftInput {
+  id: number | null
+  alias: string
+}
+
+export interface SaveDefinitionFullInput {
+  name?: string
+  category_id?: number | null
+  estimated_shelf_life_days?: number | null
+  /**
+   * 别名全量草稿（客户端最终状态）。
+   * undefined = 不改动别名；数组 = 以此为最终状态做差异同步。
+   */
+  aliases?: AliasDraftInput[]
+  /** 允许单位全量草稿。undefined = 不改动单位 */
+  units?: string[]
+  /** 要提升为默认名称的别名 id（后端在该事务内完成名称↔别名交换） */
+  set_default_alias_id?: number
+}
+
+/**
+ * 统一保存食材定义。
+ *
+ * ⚠️ 全部写操作在**同一个 `db.transaction`** 内，任一步抛错则整体回滚。
+ *    事务对象 `tx` 显式传给每个内部步骤，确保它们使用同一连接。
+ *
+ * 执行顺序（在同一事务内）：
+ *   1. 设为默认（名称 ↔ 别名交换）
+ *   2. 基础字段（名称 / 分类 / 保质期）
+ *   3. 别名差异同步（先删后增）
+ *   4. 单位差异同步（先删后增）
+ *
+ * @throws ServiceError DEFINITION_NOT_FOUND / VALIDATION_ERROR /
+ *                      DUPLICATE_NAME / CATEGORY_TRANSITION_NOT_ALLOWED /
+ *                      UNIT_IN_USE / notFoundError
+ */
+export function saveDefinitionFull(
+  id: number,
+  input: SaveDefinitionFullInput,
+): IngredientDefinition {
+  // 先确认定义存在（不存在则 404，与既有行为一致）
+  getDefinitionById(id)
+  const timestamp = nowIso()
+
+  return db.transaction((tx) => {
+    /* ---------- 1. 设为默认（名称 ↔ 别名交换）---------- */
+    if (input.set_default_alias_id !== undefined) {
+      applySetDefaultNameInTx(tx, id, input.set_default_alias_id, timestamp)
+    }
+
+    /* ---------- 2. 基础字段 ---------- */
+    const afterDefault = tx
+      .select()
+      .from(ingredientDefinition)
+      .where(eq(ingredientDefinition.id, id))
+      .get()!
+
+    let nextName = afterDefault.name
+    let nextNameNormalized = afterDefault.name_normalized
+
+    if (input.name !== undefined) {
+      if (typeof input.name !== 'string' || isBlankName(input.name)) {
+        throw validationError('食材名称不能为空')
+      }
+      const trimmed = input.name.trim()
+      const normalized = normalizeName(input.name)
+      // 仅当名称真的变化时才做唯一性检查与写入
+      if (normalized !== afterDefault.name_normalized) {
+        assertNameAvailableAcrossTables(normalized, {
+          excludeDefinitionId: id,
+          queryable: tx,
+        })
+        nextName = trimmed
+        nextNameNormalized = normalized
+      }
+    }
+
+    let nextCategoryId = afterDefault.category_id
+    if (input.category_id !== undefined) {
+      nextCategoryId = input.category_id
+      if (nextCategoryId !== null) {
+        getCategoryById(nextCategoryId)
+      }
+      // 跨类保护（有库存则 409；调味品→普通需至少 1 单位）
+      if (nextCategoryId !== afterDefault.category_id) {
+        assertCategoryChangeAllowed(tx, id, afterDefault.category_id, nextCategoryId)
+      }
+    }
+
+    let nextShelfLife = afterDefault.estimated_shelf_life_days
+    if (input.estimated_shelf_life_days !== undefined) {
+      const v = input.estimated_shelf_life_days
+      if (v !== null && (!Number.isInteger(v) || v < 0)) {
+        throw validationError(`默认预估保质期必须是非负整数或留空，当前为：${String(v)}`)
+      }
+      nextShelfLife = v
+    }
+
+    // 单位草稿决定「最终是否调味品语义」时，需要一并校验单位数量
+    const finalUnits =
+      input.units !== undefined
+        ? [...new Set(input.units)]
+        : listAllowedUnits(id, tx)
+
+    const finalIsSeasoning = isSeasoningCategory(nextCategoryId)
+    if (!finalIsSeasoning && finalUnits.length === 0) {
+      throw validationError('普通食材必须至少保留一个允许单位')
+    }
+    for (const u of finalUnits) {
+      assertValidUnit(u)
+    }
+
+    tx.update(ingredientDefinition)
+      .set({
+        name: nextName,
+        name_normalized: nextNameNormalized,
+        estimated_shelf_life_days: nextShelfLife,
+        category_id: nextCategoryId,
+        updated_at: timestamp,
+      })
+      .where(eq(ingredientDefinition.id, id))
+      .run()
+
+    /* ---------- 3. 别名差异同步 ---------- */
+    if (input.aliases !== undefined) {
+      syncAliasesInTx(tx, id, input.aliases, timestamp)
+    }
+
+    /* ---------- 4. 单位差异同步 ---------- */
+    if (input.units !== undefined) {
+      syncUnitsInTx(tx, id, finalUnits)
+    }
+
+    // 返回事务内的最终状态
+    return tx
+      .select()
+      .from(ingredientDefinition)
+      .where(eq(ingredientDefinition.id, id))
+      .get()!
+  })
+}
+
+/* ---------- 事务内部步骤（全部显式接收 tx）---------- */
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+/**
+ * 设为默认名称（事务内版本）。
+ *
+ * 语义与既有 setDefaultName 完全一致：
+ *   1. 删除被提升的别名
+ *   2. 原默认名称降级为新别名
+ *   3. 更新默认名称
+ */
+function applySetDefaultNameInTx(
+  tx: Tx,
+  definitionId: number,
+  aliasId: number,
+  timestamp: string,
+): void {
+  const definition = tx
+    .select()
+    .from(ingredientDefinition)
+    .where(eq(ingredientDefinition.id, definitionId))
+    .get()
+  if (!definition) {
+    throw definitionNotFoundError(`食材定义不存在：id=${definitionId}`)
+  }
+
+  const alias = tx.select().from(ingredientAlias).where(eq(ingredientAlias.id, aliasId)).get()
+  if (!alias) {
+    throw notFoundError(`别名不存在：id=${aliasId}`)
+  }
+  if (alias.definition_id !== definitionId) {
+    throw notFoundError(`别名不属于该食材：别名 id=${aliasId}，食材 id=${definitionId}`)
+  }
+
+  const newName = alias.alias
+  const newNameNormalized = alias.alias_normalized
+  const oldName = definition.name
+  const oldNameNormalized = definition.name_normalized
+
+  assertNameAvailableAcrossTables(newNameNormalized, {
+    excludeDefinitionId: definitionId,
+    excludeAliasId: aliasId,
+    queryable: tx,
+  })
+
+  tx.delete(ingredientAlias).where(eq(ingredientAlias.id, aliasId)).run()
+
+  tx.insert(ingredientAlias)
+    .values({
+      definition_id: definitionId,
+      alias: oldName,
+      alias_normalized: oldNameNormalized,
+      created_at: timestamp,
+    })
+    .run()
+
+  tx.update(ingredientDefinition)
+    .set({
+      name: newName,
+      name_normalized: newNameNormalized,
+      updated_at: timestamp,
+    })
+    .where(eq(ingredientDefinition.id, definitionId))
+    .run()
+}
+
+/**
+ * 别名差异同步（事务内版本）。
+ *
+ * 以草稿为**最终状态**：不在草稿里的已有别名删除，草稿中文本不存在的别名新增。
+ * 比较用**文本**而非 id，因此「设为默认」刚产生的新别名 id 也能被正确处理。
+ */
+function syncAliasesInTx(
+  tx: Tx,
+  definitionId: number,
+  drafts: AliasDraftInput[],
+  timestamp: string,
+): void {
+  // 规范化草稿文本（trim + 去重，保持顺序）
+  const wanted: string[] = []
+  for (const d of drafts) {
+    if (typeof d.alias !== 'string' || isBlankName(d.alias)) continue
+    const t = d.alias.trim()
+    if (!wanted.includes(t)) wanted.push(t)
+  }
+
+  const existing = tx
+    .select()
+    .from(ingredientAlias)
+    .where(eq(ingredientAlias.definition_id, definitionId))
+    .all()
+
+  // 1. 删除不在草稿中的
+  for (const a of existing) {
+    if (!wanted.includes(a.alias)) {
+      tx.delete(ingredientAlias).where(eq(ingredientAlias.id, a.id)).run()
+    }
+  }
+
+  // 2. 新增草稿中尚不存在的
+  const keptTexts = new Set(
+    tx
+      .select()
+      .from(ingredientAlias)
+      .where(eq(ingredientAlias.definition_id, definitionId))
+      .all()
+      .map((a) => a.alias),
+  )
+  for (const text of wanted) {
+    if (keptTexts.has(text)) continue
+    const normalized = normalizeName(text)
+    // 跨表唯一性（排除自己的默认名称）
+    assertNameAvailableAcrossTables(normalized, {
+      excludeDefinitionId: definitionId,
+      queryable: tx,
+    })
+    tx.insert(ingredientAlias)
+      .values({
+        definition_id: definitionId,
+        alias: text,
+        alias_normalized: normalized,
+        created_at: timestamp,
+      })
+      .run()
+  }
+}
+
+/**
+ * 单位差异同步（事务内版本）。
+ *
+ * ⚠️ 移除单位时遵守既有规则：仍被库存使用时拒绝（UNIT_IN_USE）。
+ */
+function syncUnitsInTx(tx: Tx, definitionId: number, wanted: string[]): void {
+  const existing = tx
+    .select()
+    .from(ingredientDefinitionUnit)
+    .where(eq(ingredientDefinitionUnit.definition_id, definitionId))
+    .all()
+
+  // 1. 删除不在草稿中的
+  for (const row of existing) {
+    if (wanted.includes(row.unit)) continue
+
+    const inUse = tx
+      .select()
+      .from(standardIngredient)
+      .where(
+        and(
+          eq(standardIngredient.definition_id, definitionId),
+          eq(standardIngredient.unit, row.unit),
+        ),
+      )
+      .all().length
+
+    if (inUse > 0) {
+      throw unitInUseError(
+        `单位「${row.unit}」仍被 ${inUse} 条库存记录使用，无法移除。请先修改或删除这些库存记录。`,
+      )
+    }
+
+    tx.delete(ingredientDefinitionUnit).where(eq(ingredientDefinitionUnit.id, row.id)).run()
+  }
+
+  // 2. 新增草稿中尚不存在的
+  const keptTexts = new Set(
+    tx
+      .select()
+      .from(ingredientDefinitionUnit)
+      .where(eq(ingredientDefinitionUnit.definition_id, definitionId))
+      .all()
+      .map((r) => r.unit),
+  )
+  for (const u of wanted) {
+    if (keptTexts.has(u)) continue
+    tx.insert(ingredientDefinitionUnit)
+      .values({ definition_id: definitionId, unit: u, created_at: nowIso() })
+      .run()
   }
 }

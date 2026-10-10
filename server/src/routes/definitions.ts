@@ -10,6 +10,7 @@ import {
   listAllowedUnits,
   listDefinitionAliases,
   removeAllowedUnit,
+  saveDefinitionFull,
   searchDefinitions,
   setDefaultName,
   updateAlias,
@@ -75,7 +76,12 @@ const createDefinitionSchema = {
   },
 } as const
 
-/** 更新 definition 的请求体 */
+/**
+ * 更新 definition 的请求体。
+ *
+ * v0.1.4：新增 category_id（可 null = 清空分类）。
+ * 跨类的合法性由 Service 层判断（CATEGORY_TRANSITION_NOT_ALLOWED）。
+ */
 const updateDefinitionSchema = {
   type: 'object',
   minProperties: 1,
@@ -83,6 +89,7 @@ const updateDefinitionSchema = {
   properties: {
     name: { type: 'string', minLength: 1 },
     estimated_shelf_life_days: { type: ['integer', 'null'] },
+    category_id: { type: ['integer', 'null'] },
   },
 } as const
 
@@ -113,6 +120,43 @@ const unitBodySchema = {
   additionalProperties: false,
   properties: {
     unit: { type: 'string', minLength: 1 },
+  },
+} as const
+
+/**
+ * 统一保存请求体（v0.1.4 第二批）。
+ *
+ * ⚠️ 与既有端点**并存**：本 schema 只服务于新增的
+ *    PATCH /api/definitions/:id/full，不替换任何现有 schema。
+ *
+ * ⚠️ additionalProperties: false —— 未知字段一律拒绝。
+ *    所有字段均可选；未提供的字段表示「不改动」。
+ */
+const saveDefinitionFullSchema = {
+  type: 'object',
+  minProperties: 1,
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string', minLength: 1 },
+    category_id: { type: ['integer', 'null'] },
+    estimated_shelf_life_days: { type: ['integer', 'null'] },
+    aliases: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['alias'],
+        additionalProperties: false,
+        properties: {
+          id: { type: ['integer', 'null'] },
+          alias: { type: 'string', minLength: 1 },
+        },
+      },
+    },
+    units: {
+      type: 'array',
+      items: { type: 'string', minLength: 1 },
+    },
+    set_default_alias_id: { type: 'integer' },
   },
 } as const
 
@@ -266,6 +310,46 @@ export function registerDefinitionRoutes(app: FastifyInstance): void {
         ...('name' in body ? { name: body.name as string } : {}),
         ...('estimated_shelf_life_days' in body
           ? { estimated_shelf_life_days: body.estimated_shelf_life_days as number | null }
+          : {}),
+        // v0.1.4：分类变更（'category_id' in body 才能区分「未提供」与「显式 null」）
+        ...('category_id' in body
+          ? { category_id: body.category_id as number | null }
+          : {}),
+      })
+      return reply.code(200).send(updated)
+    },
+  )
+
+  /**
+   * PATCH /api/definitions/:id/full
+   * 统一保存（v0.1.4 第二批）。200 / 400 / 404 / 409
+   *
+   * ⚠️ 与 PATCH /api/definitions/:id **并存**，不替换它。
+   *    本端点把基础字段 / 别名 / 单位 / 设为默认放进**同一个事务**，
+   *    任一步失败整体回滚，杜绝「部分保存」。
+   */
+  app.patch<{ Params: IdParams; Body: Record<string, unknown> }>(
+    '/api/definitions/:id/full',
+    { schema: { body: saveDefinitionFullSchema } },
+    async (request, reply) => {
+      const id = parsePositiveIntId(request.params.id)
+      if (id === null) return badIdReply(reply, request.params.id)
+
+      const body = request.body
+      const updated = saveDefinitionFull(id, {
+        ...('name' in body ? { name: body.name as string } : {}),
+        ...('category_id' in body
+          ? { category_id: body.category_id as number | null }
+          : {}),
+        ...('estimated_shelf_life_days' in body
+          ? { estimated_shelf_life_days: body.estimated_shelf_life_days as number | null }
+          : {}),
+        ...('aliases' in body
+          ? { aliases: body.aliases as Array<{ id: number | null; alias: string }> }
+          : {}),
+        ...('units' in body ? { units: body.units as string[] } : {}),
+        ...('set_default_alias_id' in body
+          ? { set_default_alias_id: body.set_default_alias_id as number }
           : {}),
       })
       return reply.code(200).send(updated)

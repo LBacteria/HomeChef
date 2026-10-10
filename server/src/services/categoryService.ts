@@ -28,13 +28,96 @@ function nowIso(): string {
 /** 调味品分类名（用于调味品特殊行为判断） */
 export { SEASONING_CATEGORY_NAME }
 
-/** 列出全部分类（按 sort_order，其次 id） */
+/* ============================================================
+ * 分类颜色（v0.1.4）
+ * ============================================================ */
+
+/** 颜色格式：严格 #RRGGBB（大小写均可） */
+const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
+
+/** 兜底色：中性灰（既用于旧数据，也用于未命中默认色表的分类） */
+export const DEFAULT_CATEGORY_COLOR = '#9E9E9E'
+
+/**
+ * 19 个默认分类的颜色。
+ *
+ * ⚠️ 以 name_normalized 为键（已 trim + toLowerCase）。
+ *    未命中的分类（含用户自定义）会走 PALETTE 兜底，
+ *    因此**不是**只为少数几个分类实现。
+ */
+const BUILTIN_COLORS: Record<string, string> = {
+  蔬菜: '#4CAF50',      // 绿
+  水果: '#FF9800',      // 橙
+  猪肉: '#E57373',      // 红
+  牛肉: '#D32F2F',      // 深红
+  羊肉: '#C62828',      // 深红
+  其他畜肉: '#EF5350',  // 红
+  鸡肉: '#FFB74D',      // 浅橙
+  鸭肉: '#FFA726',      // 橙
+  鹅肉: '#FB8C00',      // 深橙
+  其他禽肉: '#FFCC80',  // 浅橙
+  水产: '#29B6F6',      // 蓝
+  蛋类: '#FFD54F',      // 黄
+  豆制品: '#AED581',    // 浅绿
+  乳制品: '#B39DDB',    // 紫
+  '主食/谷物': '#BCAAA4', // 棕
+  '干货/菌菇': '#A1887F', // 深棕
+  冷冻食品: '#4DD0E1',  // 青
+  调味品: '#FFC107',    // 黄（与 v0.1.3 的黄色标签一致）
+  '其他/饮品': '#90A4AE', // 蓝灰
+}
+
+/** 用户自定义分类的兜底调色板 —— 保证可区分 */
+const PALETTE = [
+  '#EF5350', '#AB47BC', '#5C6BC0', '#29B6F6',
+  '#26A69A', '#66BB6A', '#D4E157', '#FFA726',
+  '#8D6E63', '#78909C', '#EC407A', '#7E57C2',
+]
+
+/**
+ * 取某个分类的默认颜色。
+ *
+ * 1. 命中内置色表 → 用内置色
+ * 2. 未命中 → 按 categoryId 稳定取模分配调色板颜色（同名始终同色）
+ */
+export function defaultColorFor(name: string, categoryId: number): string {
+  const key = normalizeName(name)
+  const builtin = BUILTIN_COLORS[key]
+  if (builtin !== undefined) {
+    return builtin
+  }
+  // 用 id 做稳定索引，保证同一分类每次得到相同颜色
+  const index = Math.abs(categoryId) % PALETTE.length
+  return PALETTE[index]
+}
+
+/** 校验颜色格式，非法则抛 400 VALIDATION_ERROR */
+export function assertValidColor(color: unknown): asserts color is string {
+  if (typeof color !== 'string' || !COLOR_PATTERN.test(color)) {
+    throw validationError(
+      `颜色格式不正确：${String(color)}。请使用 #RRGGBB 形式（例如 #4CAF50）`,
+    )
+  }
+}
+
+/**
+ * 列出全部分类（按 sort_order，其次 id）。
+ *
+ * ⚠️ 返回的每个分类都保证有合法 color：
+ *    数据库默认值是中性灰，若某行仍是兜底灰且能命中内置色表，
+ *    则返回该分类的合理默认色（**只影响返回值，不写库**）。
+ */
 export function listCategories(): Category[] {
-  return db
+  const rows = db
     .select()
     .from(category)
     .orderBy(asc(category.sort_order), asc(category.id))
     .all()
+
+  return rows.map((row) => ({
+    ...row,
+    color: row.color === DEFAULT_CATEGORY_COLOR ? defaultColorFor(row.name, row.id) : row.color,
+  }))
 }
 
 /** 按 id 获取分类；不存在则抛 404 */
@@ -95,15 +178,44 @@ export function createCategory(name: string): Category {
 
   const timestamp = nowIso()
 
-  return db
+  const created = db
     .insert(category)
     .values({
       name: trimmed,
       name_normalized: normalized,
       sort_order: maxSort + 1,
+      // 先落库拿到 id，再据此分配一个稳定的调色板颜色
+      color: DEFAULT_CATEGORY_COLOR,
       created_at: timestamp,
       updated_at: timestamp,
     })
+    .returning()
+    .get()
+
+  // 用真实 id 计算默认色；命中内置色表的名称会得到内置色
+  const color = defaultColorFor(created.name, created.id)
+
+  return { ...created, color }
+}
+
+/**
+ * 更新分类颜色（v0.1.4）。
+ *
+ * 规则：
+ *   - 只改 color，**不动** name / name_normalized / sort_order / created_at
+ *   - 因此不影响分类名称、顺序、与食材的关联，也不影响删除等其他操作
+ *
+ * @throws ServiceError VALIDATION_ERROR（格式非法）
+ *                      / DEFINITION_NOT_FOUND 语义的分类不存在 404
+ */
+export function updateCategoryColor(id: number, color: string): Category {
+  getCategoryById(id)
+  assertValidColor(color)
+
+  return db
+    .update(category)
+    .set({ color, updated_at: nowIso() })
+    .where(eq(category.id, id))
     .returning()
     .get()
 }

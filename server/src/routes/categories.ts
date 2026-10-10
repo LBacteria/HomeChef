@@ -4,6 +4,7 @@ import {
   createCategory,
   deleteCategory,
   listCategories,
+  updateCategoryColor,
 } from '../services/categoryService.js'
 import { errorBody, parsePositiveIntId } from './http.js'
 
@@ -27,6 +28,22 @@ const createCategorySchema = {
   additionalProperties: false,
   properties: {
     name: { type: 'string', minLength: 1 },
+  },
+} as const
+
+/**
+ * 更新分类请求体（v0.1.4）。
+ *
+ * ⚠️ 目前只支持改 color —— 名称、顺序、与食材的关联都不受影响。
+ *    pattern 在入口做一次格式校验，Service 层会**再次**校验
+ *    （不只依赖 JSON Schema）。
+ */
+const updateCategorySchema = {
+  type: 'object',
+  minProperties: 1,
+  additionalProperties: false,
+  properties: {
+    color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },
   },
 } as const
 
@@ -64,6 +81,28 @@ export function registerCategoryRoutes(app: FastifyInstance): void {
     async (request, reply) => {
       const created = createCategory(request.body.name as string)
       return reply.code(201).send(created)
+    },
+  )
+
+  /**
+   * PATCH /api/categories/:id
+   * 更新分类（当前仅支持颜色）。200 / 400 / 404
+   *
+   * ⚠️ 只改 color，不影响名称、顺序、与食材的关联，也不影响删除。
+   */
+  app.patch<{ Params: IdParams; Body: Record<string, unknown> }>(
+    '/api/categories/:id',
+    { schema: { body: updateCategorySchema } },
+    async (request, reply) => {
+      const id = parsePositiveIntId(request.params.id)
+      if (id === null) {
+        return reply
+          .code(400)
+          .send(errorBody('VALIDATION_ERROR', `非法 ID：${request.params.id}。ID 必须是正整数`))
+      }
+
+      const updated = updateCategoryColor(id, request.body.color as string)
+      return reply.code(200).send(updated)
     },
   )
 

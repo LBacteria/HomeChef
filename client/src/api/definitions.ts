@@ -133,6 +133,45 @@ export function deleteDefinition(id: number): Promise<void> {
 }
 
 /* ============================================================
+ * 统一保存（v0.1.4 第二批）
+ * ============================================================ */
+
+/** 别名草稿：id 为 null 表示新增 */
+export interface AliasDraftPayload {
+  id: number | null
+  alias: string
+}
+
+/**
+ * 统一保存食材定义（**单个请求**）。
+ *
+ * ⚠️ 后端在**同一个事务**内完成全部改动：
+ *    基础字段 + 别名 + 单位 + 设为默认。
+ *    任一步失败整体回滚，**不存在部分保存**，因此重试永远安全。
+ */
+export interface SaveDefinitionFullPayload {
+  name?: string
+  category_id?: number | null
+  estimated_shelf_life_days?: number | null
+  /** 别名最终状态（全量草稿） */
+  aliases?: AliasDraftPayload[]
+  /** 允许单位最终状态（全量草稿） */
+  units?: string[]
+  /** 要提升为默认名称的别名 id */
+  set_default_alias_id?: number
+}
+
+export function saveDefinitionFull(
+  id: number,
+  payload: SaveDefinitionFullPayload,
+): Promise<IngredientDefinition> {
+  return request<IngredientDefinition>(`/definitions/${id}/full`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+/* ============================================================
  * 别名 API
  * ============================================================ */
 

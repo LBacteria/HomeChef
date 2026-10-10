@@ -507,6 +507,14 @@ export const category = sqliteTable(
     /** 显示顺序（默认分类按产品定义顺序；用户新增的排在其后） */
     sort_order: integer('sort_order').notNull().default(0),
 
+    /**
+     * 分类颜色（v0.1.4），格式固定为 #RRGGBB。
+     *
+     * 用于库存列表的分类标签背景色。
+     * 已有分类通过迁移的 DEFAULT 值自动获得兜底色。
+     */
+    color: text('color').notNull().default('#9E9E9E'),
+
     created_at: text('created_at').notNull(),
     updated_at: text('updated_at').notNull(),
   },

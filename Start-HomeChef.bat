@@ -170,16 +170,20 @@ echo       Backend is ready (health check passed)
 :BACKEND_DONE
 
 REM ------------------------------------------------------------
-REM 4. Wait for the frontend, then open the browser
+REM 4. Wait for the frontend to be ready
+REM
+REM NOTE: We deliberately do NOT auto-open a browser here.
+REM       Launching the browser is left to the user, who can visit
+REM       the URL printed below at any time.
 REM ------------------------------------------------------------
 echo.
-echo [4/4] Waiting for the frontend, then opening the browser ...
+echo [4/4] Waiting for the frontend to be ready ...
 
 set /a WAIT_COUNT=0
 :WAIT_FRONTEND
 set /a WAIT_COUNT+=1
 if %WAIT_COUNT% GTR 60 (
-  echo [WARN] Frontend not ready within 60s. Opening the browser anyway.
+  echo [WARN] Frontend not ready within 60s. Continue anyway.
   goto FRONTEND_DONE
 )
 
@@ -193,8 +197,6 @@ echo       Frontend is ready
 
 :FRONTEND_DONE
 
-start "" "%FRONTEND_URL%"
-
 echo.
 echo ============================================
 echo    HomeChef is running
@@ -202,6 +204,8 @@ echo ============================================
 echo.
 echo    Frontend : %FRONTEND_URL%
 echo    Backend  : %BACKEND_URL%
+echo.
+echo    Open the Frontend URL above in your browser.
 echo.
 echo    Press any key = stop HomeChef
 echo.

@@ -156,7 +156,7 @@ export const BUILTIN_INGREDIENTS: BuiltinIngredient[] = [
   { key: 'lamb.roll', name: '羊肉卷', aliases: ['羊肉片'], units: ['克', '千克', '盒'], shelfLife: D.frozen, category: '羊肉' },
   { key: 'lamb.rib', name: '羊蝎子', aliases: [], units: ['克', '千克'], shelfLife: D.meat, category: '羊肉' },
   { key: 'pork.sausage', name: '香肠', aliases: ['腊肠'], units: ['克', '千克', '袋', '包'], shelfLife: D.dry, category: '猪肉' },
-  { key: 'pork.bacon', name: '培根', aliases: [], units: ['克', '袋', '包'], shelfLife: 30, category: '猪肉' },
+  { key: 'pork.bacon', name: '培根', aliases: ['烟肉'], units: ['克', '袋', '包'], shelfLife: 30, category: '猪肉' },
   { key: 'pork.ham', name: '火腿', aliases: ['火腿肠'], units: ['克', '袋', '包'], shelfLife: 90, category: '猪肉' },
 
   /* ---------------- 禽肉（12） ---------------- */
@@ -167,14 +167,14 @@ export const BUILTIN_INGREDIENTS: BuiltinIngredient[] = [
   { key: 'poultry.chicken_thigh', name: '鸡大腿', aliases: ['琵琶腿'], units: ['个', '克', '千克'], shelfLife: D.poultry, category: '鸡肉' },
   { key: 'poultry.chicken_feet', name: '鸡爪', aliases: ['凤爪'], units: ['个', '克', '千克'], shelfLife: D.frozen, category: '鸡肉' },
   { key: 'poultry.chicken_liver', name: '鸡肝', aliases: [], units: ['克', '千克'], shelfLife: D.poultry, category: '鸡肉' },
-  { key: 'poultry.chicken_gizzard', name: '鸡胗', aliases: [], units: ['克', '千克'], shelfLife: D.poultry, category: '鸡肉' },
+  { key: 'poultry.chicken_gizzard', name: '鸡胗', aliases: ['鸡肫'], units: ['克', '千克'], shelfLife: D.poultry, category: '鸡肉' },
   { key: 'poultry.duck_leg', name: '鸭腿', aliases: [], units: ['个', '克', '千克'], shelfLife: D.poultry, category: '鸭肉' },
   { key: 'poultry.duck_breast', name: '鸭胸肉', aliases: ['鸭胸'], units: ['克', '千克'], shelfLife: D.poultry, category: '鸭肉' },
   { key: 'poultry.duck_whole', name: '整鸭', aliases: [], units: ['个', '克', '千克'], shelfLife: D.poultry, category: '鸭肉' },
   { key: 'poultry.turkey', name: '火鸡腿', aliases: [], units: ['个', '克', '千克'], shelfLife: D.poultry, category: '其他禽肉' },
 
   /* ---------------- 水产（18） ---------------- */
-  { key: 'seafood.grass_carp', name: '草鱼', aliases: [], units: ['个', '克', '千克'], shelfLife: D.seafood, category: '水产' },
+  { key: 'seafood.grass_carp', name: '草鱼', aliases: ['鲩鱼'], units: ['个', '克', '千克'], shelfLife: D.seafood, category: '水产' },
   { key: 'seafood.bass', name: '鲈鱼', aliases: [], units: ['个', '克', '千克'], shelfLife: D.seafood, category: '水产' },
   { key: 'seafood.crucian', name: '鲫鱼', aliases: [], units: ['个', '克', '千克'], shelfLife: D.seafood, category: '水产' },
   { key: 'seafood.salmon', name: '三文鱼', aliases: ['鲑鱼'], units: ['克', '千克', '盒'], shelfLife: D.seafood, category: '水产' },
@@ -227,7 +227,7 @@ export const BUILTIN_INGREDIENTS: BuiltinIngredient[] = [
 
   /* ---------------- 主食/谷物（15） ---------------- */
   { key: 'grain.rice', name: '大米', aliases: ['米'], units: ['千克', '克', '袋', '包'], shelfLife: D.grain, category: '主食/谷物' },
-  { key: 'grain.glutinous_rice', name: '糯米', aliases: [], units: ['千克', '克', '袋'], shelfLife: D.grain, category: '主食/谷物' },
+  { key: 'grain.glutinous_rice', name: '糯米', aliases: ['江米'], units: ['千克', '克', '袋'], shelfLife: D.grain, category: '主食/谷物' },
   { key: 'grain.millet', name: '小米', aliases: [], units: ['千克', '克', '袋'], shelfLife: D.grain, category: '主食/谷物' },
   { key: 'grain.flour', name: '面粉', aliases: ['小麦粉'], units: ['千克', '克', '袋'], shelfLife: D.grain, category: '主食/谷物' },
   { key: 'grain.sticky_rice_flour', name: '糯米粉', aliases: [], units: ['克', '千克', '袋'], shelfLife: D.grain, category: '主食/谷物' },
@@ -285,7 +285,7 @@ export const BUILTIN_INGREDIENTS: BuiltinIngredient[] = [
   /* ---------------- 干货/菌菇（12） ---------------- */
   { key: 'dry.shiitake', name: '干香菇', aliases: [], units: ['克', '袋', '包'], shelfLife: D.dry, category: '干货/菌菇' },
   { key: 'dry.wood_ear', name: '干木耳', aliases: [], units: ['克', '袋', '包'], shelfLife: D.dry, category: '干货/菌菇' },
-  { key: 'dry.white_fungus', name: '银耳', aliases: [], units: ['克', '袋', '包'], shelfLife: D.dry, category: '干货/菌菇' },
+  { key: 'dry.white_fungus', name: '银耳', aliases: ['白木耳'], units: ['克', '袋', '包'], shelfLife: D.dry, category: '干货/菌菇' },
   { key: 'dry.red_date', name: '红枣', aliases: ['大枣'], units: ['克', '袋', '包'], shelfLife: D.dry, category: '干货/菌菇' },
   { key: 'dry.goji', name: '枸杞', aliases: [], units: ['克', '袋', '包'], shelfLife: D.dry, category: '干货/菌菇' },
   { key: 'dry.seaweed', name: '紫菜', aliases: [], units: ['袋', '包', '克'], shelfLife: D.dry, category: '干货/菌菇' },

@@ -491,6 +491,7 @@ COMMIT
 | GET | `/api/definitions/:id` | 查看单个定义（含 aliases、allowed_units） |
 | POST | `/api/definitions` | 新增定义 |
 | PATCH | `/api/definitions/:id` | 修改默认名称 / 预计保质期 |
+| PATCH | `/api/definitions/:id/full` | **统一保存**（v0.1.4）：基础字段 + 别名 + 单位 + 设为默认，**单事务** |
 | DELETE | `/api/definitions/:id` | 删除定义（有库存时 409 `HAS_STOCK`） |
 | POST | `/api/definitions/:id/default-name` | 把某别名设为默认名称 |
 | GET | `/api/definitions/:id/aliases` | 别名列表 |
@@ -820,8 +821,9 @@ updated_at
 
 | 操作 | 结果 |
 |---|---|
-| `GET /api/categories` | 列出全部分类（按 `sort_order`） |
+| `GET /api/categories` | 列出全部分类（按 `sort_order`），含 `color`（v0.1.4） |
 | `POST /api/categories` | 201 / 400（空名称）/ 409（重名） |
+| `PATCH /api/categories/:id` | 200 / 400 / 404，**更新分类颜色**（v0.1.4，仅 `color` 字段） |
 | `DELETE /api/categories/:id` | 204 / 400 / 404 / **409 `CATEGORY_IN_USE`** |
 
 **删除保护**：只要仍有**任何** `ingredient_definition` 引用该分类，就拒绝删除。

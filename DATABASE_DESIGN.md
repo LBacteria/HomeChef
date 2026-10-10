@@ -674,6 +674,7 @@ PRAGMA foreign_keys = ON;
 | `0003_seed_infrastructure.sql` | v0.1.0 | seed 基础设施 |
 | `0004_app_settings.sql` | **v0.1.2** | `app_settings` 单行设置表 |
 | `0005_category.sql` | **v0.1.3** | `category` 表 + `ingredient_definition.category_id` |
+| `0006_category_color.sql` | **v0.1.4** | `category.color`（`ALTER TABLE ADD COLUMN`，原地追加） |
 
 `meta/_journal.json` 与上述 6 个文件一一对应。
 
@@ -692,7 +693,7 @@ PRAGMA foreign_keys = ON;
 **读取行为**：`getSettings()` 在行不存在时返回**内置默认值**，**不产生写入副作用**。
 只有 `PATCH /api/settings` 会 upsert 该行。
 
-### 15.3 `category`（v0.1.3）
+### 15.3 `category`（v0.1.3 / v0.1.4）
 
 | 字段 | 类型 | 约束 |
 |---|---|---|
@@ -700,11 +701,19 @@ PRAGMA foreign_keys = ON;
 | `name` | TEXT | NOT NULL（保留用户输入的写法，仅 trim） |
 | `name_normalized` | TEXT | NOT NULL，**UNIQUE** |
 | `sort_order` | INTEGER | NOT NULL DEFAULT 0 |
+| `color` | TEXT | NOT NULL DEFAULT `'#9E9E9E'`（v0.1.4） |
 | `created_at` / `updated_at` | TEXT | NOT NULL |
 
 **索引**：`category_name_normalized_unique`（UNIQUE）、`category_sort_order_idx`。
 
 **内置分类与用户自定义分类结构完全相同**，没有 `builtin_category` / `custom_category` 之分。
+
+**`color`（v0.1.4）**：格式固定为 `#RRGGBB`。
+migration `0006_category_color.sql` 用 `ALTER TABLE ADD COLUMN` **原地追加**，
+不重建表、不影响已有数据行；已有分类自动获得默认值 `#9E9E9E`。
+服务端在 `PATCH /api/categories/:id` 中校验格式，非法值返回 400。
+`listCategories()` 在返回时会把仍是兜底灰且能命中内置色表的分类
+映射为该分类的默认配色（**只影响返回值，不写库**）。
 
 ### 15.4 `ingredient_definition.category_id`（v0.1.3）
 

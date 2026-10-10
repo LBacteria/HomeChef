@@ -28,3 +28,16 @@ export function createCategory(name: string): Promise<Category> {
 export function deleteCategory(id: number): Promise<void> {
   return request<void>(`/categories/${id}`, { method: 'DELETE' })
 }
+
+/**
+ * 更新分类颜色（v0.1.4）。
+ *
+ * ⚠️ 只改颜色，不影响名称、顺序、与食材的关联。
+ *    格式校验由后端负责（非法 #RRGGBB 返回 400）。
+ */
+export function updateCategoryColor(id: number, color: string): Promise<Category> {
+  return request<Category>(`/categories/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ color }),
+  })
+}

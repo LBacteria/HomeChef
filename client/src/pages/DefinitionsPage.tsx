@@ -230,7 +230,7 @@ export default function DefinitionsPage({ onDefinitionsChanged }: Props) {
                     )}
 
                     <p className="definition-meta">
-                      可用单位：{def.allowed_units.join('、') || '（无，调味品无需单位）'}
+                      可用单位：{def.allowed_units.length > 0 ? def.allowed_units.join('、') : '无'}
                     </p>
 
                     <p className="definition-meta">
@@ -267,6 +267,7 @@ export default function DefinitionsPage({ onDefinitionsChanged }: Props) {
       {editing && (
         <DefinitionEditor
           definition={editing}
+          categories={categories}
           onChanged={async () => {
             await refresh()
             // 刷新后再取最新数据回填编辑器

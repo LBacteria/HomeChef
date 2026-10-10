@@ -46,6 +46,36 @@ type Dialog =
   | { kind: 'delete'; record: InventoryRecord }
 
 /**
+ * 根据背景色选择可读的文字颜色（v0.1.4）。
+ *
+ * 用标准相对亮度公式（sRGB → 线性 → 加权）判断深浅：
+ * 浅色背景配黑字，深色背景配白字，保证分类标签可读。
+ *
+ * ⚠️ 这是纯显示层计算，不涉及任何业务规则。
+ */
+function readableTextColor(background: string): string {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(background)
+  if (!match) {
+    // 颜色格式异常时退回深色文字（后端已保证格式，这里只是兜底）
+    return '#1f1f1f'
+  }
+
+  const hex = match[1]
+  const toLinear = (channel: number) => {
+    const c = channel / 255
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  }
+
+  const r = toLinear(parseInt(hex.slice(0, 2), 16))
+  const g = toLinear(parseInt(hex.slice(2, 4), 16))
+  const b = toLinear(parseInt(hex.slice(4, 6), 16))
+
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+  return luminance > 0.5 ? '#1f1f1f' : '#ffffff'
+}
+
+/**
  * 临期状态的展示徽章。
  *
  * ⚠️ 状态来自**后端**（record.expiry_status / days_remaining），
@@ -139,6 +169,18 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
     return map
   }, [definitions])
 
+  /**
+   * 分类 ID → 分类 的映射（v0.1.4）。
+   *
+   * ⚠️ 复用**已经加载**的 categories（同一个 listCategories 响应），
+   *    不为分类标签额外发请求。
+   */
+  const categoryById = useMemo(() => {
+    const map = new Map<number, Category>()
+    for (const c of categories) map.set(c.id, c)
+    return map
+  }, [categories])
+
   const load = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
@@ -229,6 +271,23 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
     await load()
   }
 
+  /**
+   * 「食材设置」保存成功后的回调（v0.1.4）。
+   *
+   * ⚠️ 只刷新食材与分类列表，**不重建 dialog 状态** ——
+   *    否则 InventoryForm 会被卸载重挂，正在填写的库存数据就丢了。
+   *    单位与分类的更新由 InventoryForm 内部通过返回的最新定义完成。
+   */
+  const handleDefinitionSaved = useCallback(async () => {
+    try {
+      const [defs, cats] = await Promise.all([listDefinitions(), listCategories()])
+      setDefinitions(defs)
+      setCategories(cats)
+    } catch {
+      // 刷新失败不影响正在编辑的库存表单；下次 load() 会重新同步
+    }
+  }, [])
+
   return (
     <section>
       <div className="section-header">
@@ -296,10 +355,26 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
         <ul className="group-list">
           {groups.map((group) => {
             const def = definitionMap.get(group.definitionId)
+            // 分类标签（v0.1.4）：名称与颜色都来自后端返回的 category 数据，
+            // 不在此处硬编码任何分类名或颜色。
+            const category = categoryById.get(def?.category_id ?? -1)
             return (
               <li key={group.definitionId} className="group-card">
                 <div className="group-header">
-                  <h3 className="group-name">{def?.name ?? `食材 #${group.definitionId}`}</h3>
+                  <h3 className="group-name">
+                    {def?.name ?? `食材 #${group.definitionId}`}
+                    {category && (
+                      <span
+                        className="category-color-tag"
+                        style={{
+                          backgroundColor: category.color,
+                          color: readableTextColor(category.color),
+                        }}
+                      >
+                        {category.name}
+                      </span>
+                    )}
+                  </h3>
                   <span className="group-count">{group.records.length} 条库存记录</span>
                 </div>
 
@@ -407,6 +482,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
         <InventoryForm
           definitions={definitions}
           categories={categories}
+          onDefinitionSaved={handleDefinitionSaved}
           onSubmit={handleCreate}
           onCancel={closeDialog}
         />
@@ -418,6 +494,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
           categories={categories}
           initial={dialog.record}
           initialDefinition={definitionMap.get(dialog.record.definition_id)}
+          onDefinitionSaved={handleDefinitionSaved}
           onSubmit={(value) => handleUpdate(dialog.record.id, value)}
           onCancel={closeDialog}
         />

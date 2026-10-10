@@ -82,6 +82,8 @@ export interface CreateDefinitionInput {
 export interface UpdateDefinitionInput {
   name?: string
   estimated_shelf_life_days?: number | null
+  /** 所属分类（v0.1.4）；null = 清空分类。跨类切换由后端判定 */
+  category_id?: number | null
 }
 
 /* ============================================================
@@ -176,6 +178,8 @@ export interface Category {
   name: string
   name_normalized: string
   sort_order: number
+  /** 分类颜色（v0.1.4），格式 #RRGGBB。用于库存列表的分类标签 */
+  color: string
   created_at: string
   updated_at: string
 }
