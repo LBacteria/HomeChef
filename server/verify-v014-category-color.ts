@@ -87,7 +87,24 @@ try {
 
   const migrations = readdirSync(drizzleDir).filter((x) => x.endsWith('.sql')).sort()
   info('迁移文件', migrations.join(', '))
-  ok('迁移文件数量 = 7（0000~0006）', migrations.length === 7, `${migrations.length}`)
+
+  // ⚠️ 不写死数量：migration 会随版本持续增加，
+  //    「数量 = N」这类断言天然会随演进失效（v0.2.0 新增 0007 时即触发）。
+  //    这里改为验证**必要文件确实存在**，这才是真正的契约。
+  const REQUIRED_MIGRATIONS = [
+    '0000_calm_ronan',
+    '0001_ingredient_definition_model',
+    '0002_definition_id_autoincrement',
+    '0003_seed_infrastructure',
+    '0004_app_settings',
+    '0005_category',
+    '0006_category_color',
+  ]
+  const missing = REQUIRED_MIGRATIONS.filter((tag) => !migrations.some((m) => m.startsWith(tag)))
+  ok('必要 migration 文件全部存在（0000~0006）', missing.length === 0,
+    missing.length ? `缺失: ${missing.join(', ')}` : `${REQUIRED_MIGRATIONS.length} 个齐备`)
+
+  ok('至少存在 7 个 migration', migrations.length >= 7, `${migrations.length}`)
   ok('含 0006_category_color', migrations.some((m) => m.startsWith('0006')),
     migrations.filter((m) => m.startsWith('0006')).join(','))
 

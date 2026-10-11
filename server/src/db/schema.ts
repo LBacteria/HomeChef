@@ -439,6 +439,24 @@ export const appSettings = sqliteTable(
     /** 是否允许食谱推荐考虑已过期食材。0 / 1 */
     allow_expired_for_recipe: integer('allow_expired_for_recipe').notNull(),
 
+    /* ---------- v0.2.0 Phase 3：菜谱列表设置（全部 nullable）----------
+     *
+     * ⚠️ NULL = "用户尚未设置过" → Service 层回退到默认值。
+     *    这样可兼容「整行不存在」的旧库与「新列为 NULL」的升级场景。
+     */
+
+    /** 排序字段：'updated_at' | 'created_at' | 'name' */
+    recipe_sort_field: text('recipe_sort_field'),
+
+    /** 排序方向：'asc' | 'desc' */
+    recipe_sort_order: text('recipe_sort_order'),
+
+    /** Tag 筛选模式：'and' | 'or' */
+    recipe_tag_mode: text('recipe_tag_mode'),
+
+    /** 选中的 Tag 名称列表，JSON 数组字符串，如 '["家常菜","快手"]' */
+    recipe_selected_tags: text('recipe_selected_tags'),
+
     created_at: text('created_at').notNull(),
     updated_at: text('updated_at').notNull(),
   },
@@ -477,6 +495,24 @@ export const appSettings = sqliteTable(
     ),
   ],
 )
+
+/* ============================================================
+ * v0.2.0 Phase 3：菜谱列表设置的白名单
+ *
+ * ⚠️ 排序字段与方向必须走白名单校验，**绝不拼接**用户原始输入。
+ * ============================================================ */
+
+/** 菜谱列表排序字段 */
+export const RECIPE_SORT_FIELDS = ['updated_at', 'created_at', 'name'] as const
+export type RecipeSortField = (typeof RECIPE_SORT_FIELDS)[number]
+
+/** 排序方向 */
+export const RECIPE_SORT_ORDERS = ['asc', 'desc'] as const
+export type RecipeSortOrder = (typeof RECIPE_SORT_ORDERS)[number]
+
+/** Tag 筛选模式 */
+export const RECIPE_TAG_MODES = ['and', 'or'] as const
+export type RecipeTagMode = (typeof RECIPE_TAG_MODES)[number]
 
 /* ============================================================
  * v0.1.3 食材分类
@@ -525,6 +561,180 @@ export const category = sqliteTable(
 export const SEASONING_CATEGORY_NAME = '调味品'
 
 /* ============================================================
+ * v0.2.0 Phase 3 菜谱模块
+ *
+ * 四张表：
+ *   recipe             —— 菜谱主表
+ *   recipe_ingredient  —— 菜谱与食材定义的关系（允许重复关联）
+ *   recipe_tag         —— Tag 表
+ *   recipe_tag_link    —— 菜谱与 Tag 的关系
+ *
+ * ⚠️ 本阶段只建表 + 只读 API；增删改在批次 2，搜索筛选排序在批次 3。
+ * ============================================================ */
+
+/**
+ * 菜谱主表。
+ *
+ * - 名称唯一（`name_normalized` UNIQUE）
+ * - `note` 是菜谱整体备注，可为空
+ * - 制作流程 / 照片**本阶段不实现**，也不预留字段
+ */
+export const recipe = sqliteTable(
+  'recipe',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    /** 显示名称（保留用户输入的写法，仅 trim） */
+    name: text('name').notNull(),
+
+    /** 归一化名称：trim + toLowerCase，全局唯一 */
+    name_normalized: text('name_normalized').notNull().unique(),
+
+    /** 菜谱整体备注，可为空 */
+    note: text('note'),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('recipe_name_normalized_idx').on(table.name_normalized),
+    index('recipe_updated_at_idx').on(table.updated_at),
+  ],
+)
+
+/**
+ * 菜谱与食材定义的关系表。
+ *
+ * ⚠️⚠️ **关键设计**：同一菜谱**允许重复关联同一种食材**。
+ *    例如「番茄炒蛋」可以先加「鸡蛋 2 个」，再加「鸡蛋 1 个」。
+ *    因此**绝不设置** `UNIQUE(recipe_id, definition_id)`。
+ *
+ * - 每条记录**独立**保存数量、单位、备注与顺序
+ * - `quantity` / `unit` / `note` **均可为空**（三者相互独立）
+ * - 食材固定按 `sort_order` 展示（本阶段不实现拖动重排）
+ */
+export const recipeIngredient = sqliteTable(
+  'recipe_ingredient',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    // 外键 → recipe.id
+    // 删除菜谱时，其食材关联记录由 ON DELETE CASCADE 自动清理
+    recipe_id: integer('recipe_id')
+      .notNull()
+      .references(() => recipe.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    // 外键 → ingredient_definition.id
+    // ⚠️ RESTRICT：被菜谱引用的食材定义**不能直接删除**。
+    //    Service 层会返回 409 HAS_RECIPE（批次 2 实施）。
+    definition_id: integer('definition_id')
+      .notNull()
+      .references(() => ingredientDefinition.id, {
+        onDelete: 'restrict',
+        onUpdate: 'cascade',
+      }),
+
+    /** 用量，可为空 */
+    quantity: real('quantity'),
+
+    /** 单位，可为空；若有值必须在 10 个枚举内 */
+    unit: text('unit'),
+
+    /** 该食材的备注（例如「适量」「2 勺」「切丝」），可为空 */
+    note: text('note'),
+
+    /** 展示顺序：按用户添加顺序 */
+    sort_order: integer('sort_order').notNull().default(0),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [
+    // ⚠️ 此处**故意没有** UNIQUE(recipe_id, definition_id) —— 允许重复关联
+    index('recipe_ingredient_recipe_id_idx').on(table.recipe_id),
+    index('recipe_ingredient_definition_id_idx').on(table.definition_id),
+
+    // CHECK：单位若不为空，必须在枚举内
+    // ⚠️ 用显式 CASE 返回 0/1，避免 SQL 三值逻辑绕过
+    check(
+      'recipe_ingredient_unit_in_enum',
+      sql`case
+        when ${table.unit} is null then 1
+        when ${table.unit} in (${sql.raw(sqlLiteralList(UNITS))}) then 1
+        else 0
+      end`,
+    ),
+
+    // CHECK：数量若不为空，必须非负
+    check(
+      'recipe_ingredient_quantity_non_negative',
+      sql`${table.quantity} is null or ${table.quantity} >= 0`,
+    ),
+  ],
+)
+
+/**
+ * Tag 表。
+ *
+ * - 名称唯一（`name_normalized` UNIQUE）—— 同名 Tag 不得重复创建
+ * - 支持自由创建与复用
+ */
+export const recipeTag = sqliteTable(
+  'recipe_tag',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    /** 显示名称 */
+    name: text('name').notNull(),
+
+    /** 归一化名称：trim + toLowerCase，全局唯一 */
+    name_normalized: text('name_normalized').notNull().unique(),
+
+    created_at: text('created_at').notNull(),
+  },
+  (table) => [index('recipe_tag_name_normalized_idx').on(table.name_normalized)],
+)
+
+/**
+ * 菜谱与 Tag 的关联表。
+ *
+ * - 一个菜谱可关联多个 Tag，也可以没有 Tag
+ * - 同一菜谱不重复挂同一个 Tag（UNIQUE）
+ * - 删除 Tag → 关联由 CASCADE 清理，但**菜谱本身保留**
+ */
+export const recipeTagLink = sqliteTable(
+  'recipe_tag_link',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    recipe_id: integer('recipe_id')
+      .notNull()
+      .references(() => recipe.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    tag_id: integer('tag_id')
+      .notNull()
+      .references(() => recipeTag.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    created_at: text('created_at').notNull(),
+  },
+  (table) => [
+    // 同一菜谱不重复挂同一 Tag
+    uniqueIndex('recipe_tag_link_unique').on(table.recipe_id, table.tag_id),
+    index('recipe_tag_link_recipe_id_idx').on(table.recipe_id),
+    index('recipe_tag_link_tag_id_idx').on(table.tag_id),
+  ],
+)
+
+/* ============================================================
  * 类型导出
  * ============================================================ */
 
@@ -544,3 +754,13 @@ export type AppSettings = typeof appSettings.$inferSelect
 export type NewAppSettings = typeof appSettings.$inferInsert
 export type Category = typeof category.$inferSelect
 export type NewCategory = typeof category.$inferInsert
+
+/* ---- v0.2.0 Phase 3 菜谱模块 ---- */
+export type Recipe = typeof recipe.$inferSelect
+export type NewRecipe = typeof recipe.$inferInsert
+export type RecipeIngredient = typeof recipeIngredient.$inferSelect
+export type NewRecipeIngredient = typeof recipeIngredient.$inferInsert
+export type RecipeTag = typeof recipeTag.$inferSelect
+export type NewRecipeTag = typeof recipeTag.$inferInsert
+export type RecipeTagLink = typeof recipeTagLink.$inferSelect
+export type NewRecipeTagLink = typeof recipeTagLink.$inferInsert

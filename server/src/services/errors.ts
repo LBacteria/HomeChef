@@ -22,6 +22,10 @@ export type ServiceErrorCode =
   | 'UNIT_NOT_ALLOWED'
   | 'CATEGORY_IN_USE'
   | 'CATEGORY_TRANSITION_NOT_ALLOWED'
+  // v0.2.0 Phase 3 菜谱模块
+  | 'RECIPE_NOT_FOUND'
+  | 'TAG_NOT_FOUND'
+  | 'HAS_RECIPE'
 
 /**
  * Service 业务错误。
@@ -52,6 +56,16 @@ export function invalidDateRangeError(message: string): ServiceError {
 /** 食材不存在 */
 export function notFoundError(message: string): ServiceError {
   return new ServiceError('INGREDIENT_NOT_FOUND', message)
+}
+
+/** 菜谱不存在（v0.2.0 Phase 3） */
+export function recipeNotFoundError(message: string): ServiceError {
+  return new ServiceError('RECIPE_NOT_FOUND', message)
+}
+
+/** Tag 不存在（v0.2.0 Phase 3） */
+export function tagNotFoundError(message: string): ServiceError {
+  return new ServiceError('TAG_NOT_FOUND', message)
 }
 
 /** 该食材已存在（按 name_normalized 判断） */
@@ -87,6 +101,18 @@ export function definitionNotFoundError(message: string): ServiceError {
  */
 export function hasStockError(message: string): ServiceError {
   return new ServiceError('HAS_STOCK', message)
+}
+
+/**
+ * 食材定义仍被菜谱引用，无法删除（HTTP 409）。
+ *
+ * 规则：只要 definition 被**任何**菜谱的食材记录引用，就拒绝删除。
+ * 绝不级联删除菜谱或菜谱的食材关联。
+ *
+ * ⚠️ 与 HAS_STOCK 对称：先查库存，再查菜谱引用，两者都不通过才允许删除。
+ */
+export function hasRecipeError(message: string): ServiceError {
+  return new ServiceError('HAS_RECIPE', message)
 }
 
 /**

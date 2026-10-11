@@ -546,7 +546,6 @@ ingredient_alias.alias_normalized     = '西红柿'   ← 单独看也合法
 | 不创建的表 | 原因 |
 |---|---|
 | `consumption_history` | 决策 12：不记录消耗历史 |
-| `recipe` / `recipe_ingredient` | 范围外，后续阶段（v0.2.0） |
 | `recommendation` | 范围外 |
 | `shopping_list` | 范围外 |
 | `unit`（单位表） | 10 个固定枚举，用 CHECK 约束即可 |
@@ -554,6 +553,11 @@ ingredient_alias.alias_normalized     = '西红柿'   ← 单独看也合法
 | `user` | 单用户本地应用 |
 
 > `category` 表已于 **v0.1.3** 引入，见 **第 15 节**。
+>
+> `recipe` / `recipe_ingredient` / `recipe_tag` / `recipe_tag_link` 已于
+> **v0.2.0（Phase 3 批次 1）** 引入，见 **第 16 节**。
+>
+> ⚠️ 本期仍**不创建**菜谱推荐 / 采购清单 / 照片 / 制作流程相关的任何表。
 
 **此外也不创建**：SQLite Trigger（跨表唯一性由 Service 负责）、FTS 虚拟表、视图。
 
@@ -777,3 +781,145 @@ SQLite 无法直接 `ALTER TABLE` 增加带外键约束的列，因此采用标�
 
 **这样做的直接好处**：`expiry_date = NULL` ⇒ 调味品天然落在 `no_expiry` 分支，
 **不会进入临期 / 过期判断**，无需为临期系统增加特例。
+
+---
+
+## 16. v0.2.0（Phase 3）菜谱模块表
+
+> 引入版本：**v0.2.0**
+> migration：**`0007_recipe.sql`**
+> 本阶段（批次 1）**只建表 + 只读 API**；增删改在批次 2，搜索筛选排序在批次 3。
+
+### 16.1 迁移一览
+
+| migration | 内容 |
+|---|---|
+| `0007_recipe.sql` | 新增 `recipe`、`recipe_ingredient`、`recipe_tag`、`recipe_tag_link` 四张表及索引 |
+
+**本 migration 的性质**：
+
+* ✅ **纯新增表** —— 不重建任何既有表、不修改任何既有列
+* ✅ 不触碰任何现有数据（`ingredient_definition` / `standard_ingredient` / `category` / `app_settings` 一律不动）
+* ✅ 可在**空库**上从 `0000` 顺序执行至 `0007`
+
+### 16.2 表关系
+
+```text
+recipe ──1:N──> recipe_ingredient ──N:1──> ingredient_definition
+   │
+   └──N:M──> recipe_tag   （通过 recipe_tag_link）
+```
+
+* 菜谱 → 食材：通过 **`ingredient_definition.id`**（稳定身份，不是库存记录）
+* 菜谱 → Tag：多对多
+* 删除菜谱 → 级联清理其食材关联与 Tag 关联
+* 删除食材定义 → **被菜谱引用时 RESTRICT**（Service 返回 `409 HAS_RECIPE`，批次 2 实施）
+* 删除 Tag → 级联清理关联，但**菜谱保留**
+
+### 16.3 `recipe`（菜谱主表）
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | integer | PK AUTOINCREMENT | 稳定身份 |
+| `name` | text | NOT NULL | 显示名称（保留用户写法，仅 trim） |
+| `name_normalized` | text | NOT NULL **UNIQUE** | `trim + toLowerCase`，唯一性依据 |
+| `note` | text | NULL | 菜谱整体备注 |
+| `created_at` | text | NOT NULL | ISO 时间戳 |
+| `updated_at` | text | NOT NULL | ISO 时间戳 |
+
+**索引**：`recipe_name_normalized_unique`（唯一）、`recipe_name_normalized_idx`、`recipe_updated_at_idx`
+
+> ⚠️ **制作流程 / 照片本阶段不实现，也不预留字段** —— 避免为未确认需求提前建模。
+
+### 16.4 `recipe_ingredient`（菜谱与食材定义的关系）
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | integer | PK AUTOINCREMENT | |
+| `recipe_id` | integer | NOT NULL，FK → `recipe.id` **ON DELETE CASCADE** | 删菜谱时自动清理 |
+| `definition_id` | integer | NOT NULL，FK → `ingredient_definition.id` **ON DELETE RESTRICT** | 被引用时不可删定义 |
+| `quantity` | real | **NULL 允许** | 用量 |
+| `unit` | text | **NULL 允许**，非空时须在 10 个枚举内 | 单位 |
+| `note` | text | **NULL 允许** | 该食材备注（如「适量」「2 勺」） |
+| `sort_order` | integer | NOT NULL DEFAULT 0 | 展示顺序 = 用户添加顺序 |
+| `created_at` / `updated_at` | text | NOT NULL | |
+
+**索引**：`recipe_ingredient_recipe_id_idx`、`recipe_ingredient_definition_id_idx`
+
+**CHECK 约束**：
+
+| 名称 | 内容 |
+|---|---|
+| `recipe_ingredient_quantity_non_negative` | `quantity is null or quantity >= 0` |
+| `recipe_ingredient_unit_in_enum` | 单位为空，或在 `个 克 千克 毫升 升 包 袋 瓶 盒 罐` 内 |
+
+### 16.5 ⚠️⚠️ 关键设计：允许重复关联同一食材
+
+**`recipe_ingredient` 上故意没有 `UNIQUE(recipe_id, definition_id)`。**
+
+同一道菜谱**允许重复添加同一种食材**，例如：
+
+```text
+番茄炒蛋
+  鸡蛋 × 2      （sort_order = 0）
+  番茄 × 1      （sort_order = 1）
+  鸡蛋 × 1      （sort_order = 2）  ← 重复关联，合法
+```
+
+* 每条记录**独立**保存数量、单位、备注与顺序
+* 同一食材出现多次时，**不合并、不去重**
+* ❌ **不得**添加该唯一约束 —— 详见 `PROJECT_SPEC.md` 4.2.3
+
+### 16.6 `recipe_tag`（Tag 表）
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | integer | PK AUTOINCREMENT | |
+| `name` | text | NOT NULL | 显示名称 |
+| `name_normalized` | text | NOT NULL **UNIQUE** | 同名 Tag 不得重复创建 |
+| `created_at` | text | NOT NULL | |
+
+**索引**：`recipe_tag_name_normalized_unique`（唯一）、`recipe_tag_name_normalized_idx`
+
+> Tag 是**灵活的多标签系统**，不是独立的菜谱分类体系。
+
+### 16.7 `recipe_tag_link`（菜谱与 Tag 的关系）
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `id` | integer | PK AUTOINCREMENT | |
+| `recipe_id` | integer | NOT NULL，FK → `recipe.id` **ON DELETE CASCADE** | |
+| `tag_id` | integer | NOT NULL，FK → `recipe_tag.id` **ON DELETE CASCADE** | 删 Tag 清理关联 |
+| `created_at` | text | NOT NULL | |
+
+**索引**：`recipe_tag_link_unique`（**UNIQUE(recipe_id, tag_id)**）、`recipe_tag_link_recipe_id_idx`、`recipe_tag_link_tag_id_idx`
+
+> 同一菜谱不重复挂同一 Tag；但删 Tag **不影响菜谱本身**。
+
+### 16.8 错误码新增
+
+| 错误码 | HTTP | 场景 |
+|---|---|---|
+| `RECIPE_NOT_FOUND` | 404 | 菜谱不存在 |
+| `TAG_NOT_FOUND` | 404 | Tag 不存在（批次 2 使用） |
+
+> ⚠️ 菜谱相关错误**不复用** `INGREDIENT_NOT_FOUND`（语义不同）。
+> 映射见 `server/src/routes/http.ts` 的 `STATUS_BY_CODE`。
+
+### 16.9 与 `app_settings` 的关系（批次 3 预告）
+
+批次 3 将**复用 `app_settings` 单行表**，通过 `0008_recipe_list_settings.sql`
+新增 4 个可空列（`recipe_sort_field` / `recipe_sort_order` / `recipe_tag_mode` /
+`recipe_selected_tags`），**不新建独立设置表**。
+
+> 本批次（1）**不含**这些列。
+
+### 16.10 明确不包含的内容
+
+| 不包含 | 归属 |
+|---|---|
+| 菜谱推荐 / 可制作判断 | Phase 4 |
+| 每日菜单 / 营养平衡 | Phase 4 |
+| 库存扣减闭环 | Phase 5 |
+| 采购清单 | Phase 6 |
+| 照片、制作流程、份数 | 未规划 |

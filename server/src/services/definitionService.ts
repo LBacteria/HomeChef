@@ -6,6 +6,7 @@ import {
   ingredientAlias,
   ingredientDefinition,
   ingredientDefinitionUnit,
+  recipeIngredient,
   standardIngredient,
 } from '../db/schema.js'
 import type { IngredientDefinition, IngredientDefinitionUnit, Unit } from '../db/schema.js'
@@ -13,6 +14,7 @@ import {
   categoryTransitionNotAllowedError,
   definitionNotFoundError,
   duplicateNameError,
+  hasRecipeError,
   hasStockError,
   notFoundError,
   unitInUseError,
@@ -438,7 +440,10 @@ function assertCategoryChangeAllowed(
  *
  * ⚠️ 绝不级联删除库存记录。
  *
- * @throws ServiceError DEFINITION_NOT_FOUND / HAS_STOCK
+ * v0.2.0 起：**也绝不级联删除菜谱引用**。
+ * 只要该定义还被任何菜谱的食材记录引用，就拒绝删除（HAS_RECIPE）。
+ *
+ * @throws ServiceError DEFINITION_NOT_FOUND / HAS_STOCK / HAS_RECIPE
  */
 export function deleteDefinition(id: number): void {
   getDefinitionById(id)
@@ -452,6 +457,21 @@ export function deleteDefinition(id: number): void {
   if (stockCount > 0) {
     throw hasStockError(
       `该食材还有 ${stockCount} 条库存记录，无法删除。请先删除这些库存记录。`,
+    )
+  }
+
+  // v0.2.0 Phase 3：菜谱引用保护。
+  // ⚠️ 数据库层已有 ON DELETE RESTRICT 兜底，但这里显式检查是为了
+  //    返回**语义明确的 409 HAS_RECIPE**，而不是让 SQLite 抛外键异常（→ 500）。
+  const recipeRefCount = db
+    .select()
+    .from(recipeIngredient)
+    .where(eq(recipeIngredient.definition_id, id))
+    .all().length
+
+  if (recipeRefCount > 0) {
+    throw hasRecipeError(
+      `该食材已被 ${recipeRefCount} 条菜谱食材记录引用，无法删除。请先从相关菜谱中移除该食材。`,
     )
   }
 

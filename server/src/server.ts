@@ -5,6 +5,7 @@ import { registerDefinitionRoutes } from './routes/definitions.js'
 import { registerIngredientRoutes } from './routes/ingredients.js'
 import { registerSettingsRoutes } from './routes/settings.js'
 import { registerCategoryRoutes } from './routes/categories.js'
+import { registerRecipeRoutes } from './routes/recipes.js'
 
 // 后端应用入口。
 //
@@ -46,6 +47,7 @@ registerDefinitionRoutes(app)
 registerIngredientRoutes(app)
 registerSettingsRoutes(app)
 registerCategoryRoutes(app)
+registerRecipeRoutes(app)
 
 // 默认端口 3001（3000 已被本机其他程序占用）。
 // 仍可用 PORT 环境变量覆盖（测试等场景）。

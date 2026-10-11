@@ -25,6 +25,10 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   UNIT_NOT_ALLOWED: 400,
   CATEGORY_IN_USE: 409,
   CATEGORY_TRANSITION_NOT_ALLOWED: 409,
+  // v0.2.0 Phase 3 菜谱模块
+  RECIPE_NOT_FOUND: 404,
+  TAG_NOT_FOUND: 404,
+  HAS_RECIPE: 409,
 }
 
 /** 统一错误响应体（ARCHITECTURE.md 第 9.2 节） */
