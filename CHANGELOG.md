@@ -4,6 +4,35 @@ HomeChef 的版本变更记录。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### Fixed
+
+**日期计算基准**
+
+- 后端 `todayDateString()` 原先取 **UTC 日期**，而前端 `client/src/format.ts`
+  取**本地日历日期**，两者在 UTC+8 时区的北京时间 00:00–08:00 之间会相差一天，
+  导致：默认入库日期被填成昨天、临期 / 过期状态晚一天、前后端"今天"显示不一致。
+  现改为统一按**用户本地日历日期**取值（提交 `56345b3`）
+- `addDays` / `compareDates` 等**纯日期运算**保持 UTC 实现不变 ——
+  纯日期字符串运算不涉及时区，无需改动
+- `todayDateString()` 新增可选参数 `now`（仅供测试注入固定时刻，业务调用不传）
+
+**日期测试补强**
+
+- 新增 `server/verify-dates.ts`（提交 `56345b3`，提交 `b2a9e7a` 补强）：
+  覆盖跨月 / 跨年 / 闰年 / 世纪末、临期与过期状态、API 端到端，
+  以及 UTC / UTC+8 / UTC-5 三种时区边界
+- 时区测试通过**独立子进程注入 `TZ`**，结果可重复且不依赖执行机器的时区
+- 新增 `server/_tz-probe.ts`：直接调用真实 `todayDateString(固定时刻)`，
+  并含"若退回 UTC 取值则必须失败"的回归保护
+- 修正 `server/verify-v014-category-color.ts` 的删除保护前置条件
+  （临时库未跑 seed，原断言缺少"分类仍被使用"的前提）
+- `server/verify-dates.ts` 去除一处恒真断言（`|| true`），
+  并新增辅助函数 `pickYmd()` 的字段缺失 / 空字符串 / 位数异常分支测试
+
+---
+
 ## [0.1.4] - 2026-10-10
 
 分类颜色、食材快捷编辑统一保存与内置食材数据维护。
