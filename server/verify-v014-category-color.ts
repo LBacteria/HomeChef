@@ -243,8 +243,31 @@ try {
   ok('修改不存在分类的颜色 → 404',
     (await req('PATCH', '/api/categories/999999', { color: '#000000' })).status === 404)
   ok('非法 ID 改颜色 → 400', (await req('PATCH', '/api/categories/abc', { color: '#000000' })).status === 400)
+
+  // ⚠️ 前置条件说明：
+  //   本脚本用「只跑迁移、不跑 seed」的临时库，
+  //   因此「调味品」分类下默认**没有任何食材**，
+  //   直接删除会返回 204（合法删除）而不是 409。
+  //   这里先创建一个属于调味品的食材，让「分类仍被使用」这一前提成立，
+  //   再验证删除保护。**不是放宽断言**。
+  const seasoningCategoryId = byName.get('调味品')!.id
+  const guard = await req('POST', '/api/definitions', {
+    name: 'v014删除保护测试食材',
+    units: [],
+    category_id: seasoningCategoryId,
+  })
+  ok('前置：创建调味品食材 → 201', guard.status === 201, `${guard.status}`)
+
+  const refCount = (raw
+    .prepare('select count(*) c from ingredient_definition where category_id = ?')
+    .get(seasoningCategoryId) as any).c
+  ok('前置：调味品分类下有食材引用', refCount > 0, `${refCount}`)
+
   ok('仍有食材的分类不能删除 → 409',
-    (await req('DELETE', `/api/categories/${byName.get('调味品')!.id}`)).status === 409)
+    (await req('DELETE', `/api/categories/${seasoningCategoryId}`)).status === 409)
+
+  ok('  该分类确实仍然存在',
+    (await req('GET', '/api/categories')).body.some((c: any) => c.id === seasoningCategoryId))
 
   /* ============================================================
    * 八、数据完整性

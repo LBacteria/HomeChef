@@ -1,14 +1,22 @@
 /**
  * 日期工具 —— 纯日期运算。
  *
- * ⚠️ 全部使用 UTC，避免本地时区导致跨日错误。
+ * ⚠️ 两个概念要分清：
  *
- * 反例（错误做法）：
- *   new Date('2026-10-02')            → 解析为 UTC 午夜
- *   new Date(2026, 9, 2)              → 解析为**本地**午夜，在不同时区偏移不同
- *   date.setDate(date.getDate() + 7)  → 用本地时区加减，跨时区会差一天
+ *   1. **纯日期运算**（addDays / compareDates / isValidDateString）
+ *      全程使用 UTC，避免本地时区导致跨日错误。
  *
- * 正确做法：解析为 UTC，用 setUTCDate / getUTCDate 运算，输出 YYYY-MM-DD。
+ *      反例（错误做法）：
+ *        new Date('2026-10-02')            → 解析为 UTC 午夜
+ *        new Date(2026, 9, 2)              → 解析为**本地**午夜，在不同时区偏移不同
+ *        date.setDate(date.getDate() + 7)  → 用本地时区加减，跨时区会差一天
+ *
+ *      正确做法：解析为 UTC，用 setUTCDate / getUTCDate 运算，输出 YYYY-MM-DD。
+ *
+ *   2. **"今天"的取值基准**（todayDateString）
+ *      取**用户本地日历日期** —— 因为日期字段表示日历日期，
+ *      用户说的"今天"就是他电脑上日历显示的那一天。
+ *      必须与前端 client/src/format.ts 的 todayDateString 保持一致。
  *
  * 日期格式统一为 ISO 8601 的 YYYY-MM-DD（与数据库存储一致）。
  */
@@ -44,14 +52,29 @@ function parseUTCDate(value: DateString): Date {
 }
 
 /**
- * 今天的日期（UTC）。
+ * 今天的日期（**用户本地日历日期**）。
  *
- * 注意：使用 UTC 而非本地时区，保证与所有日期运算逻辑一致。
- * 对 v0.1 单用户本地应用而言，UTC 与本地日期的差异最多一天，
- * 但一致性比"贴近本地"更重要 —— 否则跨时区计算会出错。
+ * ⚠️ 基准说明（v0.1.4 修复）：
+ *   HomeChef 是单机单用户本地应用，日期字段表示**日历日期**而非时间点。
+ *   用户说的"今天"就是他电脑上日历显示的那一天，因此这里取**本地日期**。
+ *
+ *   此前使用 UTC 日期，会导致 UTC+8 时区在北京时间 00:00–08:00 之间
+ *   把"今天"判成前一天，与前端 `client/src/format.ts` 的本地日期不一致：
+ *     - 默认入库日期会填成昨天
+ *     - 临期 / 过期状态晚一天
+ *
+ * ⚠️ 只改**取值基准**；addDays / compareDates 等纯日期运算仍用 UTC
+ *    （纯日期字符串运算不涉及时区，保持原实现即可）。
+ *
+ * @param now 可选。**仅供测试注入固定时刻**，业务调用一律不传。
+ *            传入时按该 Date 的本地日历取值，使结果可重复验证。
+ *            不允许传 null / undefined 以外的假值 —— 省略即用当前时间。
  */
-export function todayDateString(): DateString {
-  return toDateString(new Date())
+export function todayDateString(now: Date = new Date()): DateString {
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 /**
