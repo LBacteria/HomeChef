@@ -90,6 +90,202 @@ ok('非字符串非法', !isValidDateString(20261011))
 section('4. 时区边界（子进程注入 TZ）')
 
 /**
+ * 从 `formatToParts()` 的结果中提取 year / month / day 并校验。
+ *
+ * ⚠️ 抽成**独立的模块级纯函数**（接收 parts 数组），原因是：
+ *    `need()` 原本是 `ymdInTz()` 内部的闭包，外部无法单独调用，也无法注入
+ *    缺少字段的 parts —— 于是"字段缺失"这条错误分支**根本没法被直接测试**
+ *    （非法时区/非法日期都在更早的阶段就抛错了，走不到这里）。
+ *    抽出来之后，可以为"缺 year / 缺 month / 缺 day / 空字符串"分别构造
+ *    parts 数组做直接验证。
+ *
+ * @param parts `formatToParts()` 的返回值
+ * @param ctx   出错信息里的上下文（调用方传入 iso / tz 等）
+ */
+function pickYmd(
+  parts: Intl.DateTimeFormatPart[],
+  ctx: string,
+): { year: string; month: string; day: string } {
+  /**
+   * 取指定 part 的值；缺失或为空立即报错。
+   *
+   * ⚠️ 不用 `?? ''` 兜底：静默拼出 "--" 这类非法值会掩盖问题，
+   *    必须让异常显式暴露（含字段名与上下文，便于定位）。
+   */
+  const need = (type: 'year' | 'month' | 'day'): string => {
+    const value = parts.find((p) => p.type === type)?.value
+    if (value === undefined || value === '') {
+      throw new Error(`缺少 ${type} 部分（${ctx}）`)
+    }
+    return value
+  }
+
+  const year = need('year')
+  const month = need('month')
+  const day = need('day')
+
+  // 位数校验：格式不符预期时立即报错，而不是返回一个看似合法的字符串
+  if (!/^\d{4}$/.test(year) || !/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) {
+    throw new Error(
+      `日期部分位数异常（${ctx}, year=${year}, month=${month}, day=${day}）`,
+    )
+  }
+
+  return { year, month, day }
+}
+
+/**
+ * 把某个时刻在**指定时区**下的日历日格式化为 YYYY-MM-DD。
+ *
+ * ⚠️ 为什么不用 `new Intl.DateTimeFormat('en-CA', ...).format(d)`：
+ *    `en-CA` 的输出格式**依赖 ICU 数据版本**，历史上曾输出过 `M/d/yyyy`，
+ *    不能保证永远是 `YYYY-MM-DD`。在本测试机器上恰好正确，但换 Node/ICU
+ *    版本就可能失效，属于隐式的环境依赖。
+ *
+ *    因此改用 `formatToParts()` 按 part 类型取 year / month / day，
+ *    再**显式拼接**（见 pickYmd）—— 不依赖 locale 的排列顺序与分隔符。
+ *
+ * @param iso 带时区标记的 ISO 时刻（例如 '2026-10-11T23:30:00Z'）
+ * @param tz  IANA 时区名
+ */
+function ymdInTz(iso: string, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(iso))
+
+  const { year, month, day } = pickYmd(parts, `iso=${iso}, tz=${tz}`)
+  return `${year}-${month}-${day}`
+}
+
+/* ---------- ymdInTz 自身的健壮性自测 ---------- */
+//
+// 这一小节验证"测试辅助函数"本身按预期工作：
+//   - 正常输入返回 YYYY-MM-DD
+//   - 非法输入**抛出异常**（而不是静默返回非法字符串）
+section('4a. ymdInTz 辅助函数自测')
+
+ok('正常输入：UTC 下返回 2026-10-11',
+  ymdInTz('2026-10-11T23:30:00Z', 'UTC') === '2026-10-11')
+ok('正常输入：UTC+8 下跨日返回 2026-10-12',
+  ymdInTz('2026-10-11T23:30:00Z', 'Asia/Shanghai') === '2026-10-12')
+ok('个位数月/日仍补零为两位',
+  ymdInTz('2026-01-05T00:00:00Z', 'UTC') === '2026-01-05')
+ok('闰日正确',
+  ymdInTz('2000-02-29T00:00:00Z', 'UTC') === '2000-02-29')
+ok('+14 时区跨年正确',
+  ymdInTz('2026-12-31T23:59:59Z', 'Pacific/Kiritimati') === '2027-01-01')
+
+/** 断言某次调用会抛错（辅助函数不得静默返回非法值） */
+function throwsOn(fn: () => unknown): boolean {
+  try {
+    fn()
+    return false
+  } catch {
+    return true
+  }
+}
+
+/** 捕获调用抛出的错误信息；未抛错时返回 null */
+function errorMessageOf(fn: () => unknown): string | null {
+  try {
+    fn()
+    return null
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e)
+  }
+}
+
+/* ---------- 直接测试 pickYmd 的"字段缺失"分支 ---------- */
+//
+// ⚠️ 为什么不复用上面的 ymdInTz：
+//    非法时区名会在 Intl.DateTimeFormat() 构造时抛错，
+//    非法日期会在 formatToParts() 内部抛错 ——
+//    两者都**走不到 pickYmd**，因此无法验证下面这个分支：
+//        if (value === undefined || value === '') { throw ... }
+//
+//    所以这里直接构造 parts 数组喂给 pickYmd。
+
+/** 用真实 parts 作模板，再按需删除/改空某个字段 */
+function partsWithout(omit: 'year' | 'month' | 'day'): Intl.DateTimeFormatPart[] {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+  })
+    .formatToParts(new Date('2026-10-11T12:00:00Z'))
+    .filter((p) => p.type !== omit)
+}
+
+function partsWithEmpty(field: 'year' | 'month' | 'day'): Intl.DateTimeFormatPart[] {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+  })
+    .formatToParts(new Date('2026-10-11T12:00:00Z'))
+    .map((p) => (p.type === field ? { type: p.type, value: '' } : p))
+}
+
+const CTX = 'iso=2026-10-11T12:00:00Z, tz=UTC'
+
+// ---- 缺少字段 ----
+const errNoYear = errorMessageOf(() => pickYmd(partsWithout('year'), CTX))
+ok('缺少 year → 抛错', errNoYear !== null, `${errNoYear}`)
+ok('  错误信息含 "year"', errNoYear?.includes('year') === true, `${errNoYear}`)
+ok('  错误信息含上下文（iso/tz）',
+  errNoYear?.includes(CTX) === true, `${errNoYear}`)
+
+const errNoMonth = errorMessageOf(() => pickYmd(partsWithout('month'), CTX))
+ok('缺少 month → 抛错', errNoMonth !== null, `${errNoMonth}`)
+ok('  错误信息含 "month"', errNoMonth?.includes('month') === true, `${errNoMonth}`)
+ok('  错误信息含上下文（iso/tz）',
+  errNoMonth?.includes(CTX) === true, `${errNoMonth}`)
+
+const errNoDay = errorMessageOf(() => pickYmd(partsWithout('day'), CTX))
+ok('缺少 day → 抛错', errNoDay !== null, `${errNoDay}`)
+ok('  错误信息含 "day"', errNoDay?.includes('day') === true, `${errNoDay}`)
+ok('  错误信息含上下文（iso/tz）',
+  errNoDay?.includes(CTX) === true, `${errNoDay}`)
+
+// ---- 空字符串字段（不得被静默接受）----
+const errEmptyYear = errorMessageOf(() => pickYmd(partsWithEmpty('year'), CTX))
+ok('year 为空字符串 → 抛错（不静默接受）', errEmptyYear !== null, `${errEmptyYear}`)
+ok('  错误信息含 "year"', errEmptyYear?.includes('year') === true, `${errEmptyYear}`)
+
+const errEmptyMonth = errorMessageOf(() => pickYmd(partsWithEmpty('month'), CTX))
+ok('month 为空字符串 → 抛错（不静默接受）', errEmptyMonth !== null, `${errEmptyMonth}`)
+ok('  错误信息含 "month"', errEmptyMonth?.includes('month') === true, `${errEmptyMonth}`)
+
+const errEmptyDay = errorMessageOf(() => pickYmd(partsWithEmpty('day'), CTX))
+ok('day 为空字符串 → 抛错（不静默接受）', errEmptyDay !== null, `${errEmptyDay}`)
+ok('  错误信息含 "day"', errEmptyDay?.includes('day') === true, `${errEmptyDay}`)
+
+// ---- 位数校验分支（同样直接构造 parts）----
+const errShortYear = errorMessageOf(() =>
+  pickYmd(
+    new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(new Date('2026-10-11T12:00:00Z'))
+      .map((p) => (p.type === 'year' ? { type: p.type, value: '26' } : p)),
+    CTX,
+  ))
+ok('year 为 2 位 → 抛位数异常', errShortYear !== null, `${errShortYear}`)
+ok('  错误信息含 "位数异常"', errShortYear?.includes('位数异常') === true, `${errShortYear}`)
+
+// ---- 正常 parts 仍应通过 ----
+const goodParts = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+}).formatToParts(new Date('2026-10-11T12:00:00Z'))
+ok('完整 parts → 正常返回',
+  pickYmd(goodParts, CTX).year === '2026' &&
+  pickYmd(goodParts, CTX).month === '10' &&
+  pickYmd(goodParts, CTX).day === '11')
+
+/* ---------- 端到端：非法输入的兜底行为（不代表 pickYmd 分支）---------- */
+ok('非法时区名 → 抛错（在 Intl 构造阶段）',
+  throwsOn(() => ymdInTz('2026-10-11T23:30:00Z', 'Not/AZone')))
+ok('非法日期字符串 → 抛错（在 formatToParts 阶段）',
+  throwsOn(() => ymdInTz('not-a-date', 'UTC')))
+
+/**
  * 在指定 TZ 下运行时区探针，返回其 stdout（去掉首尾空白）。
  *
  * 用独立的 `node`/`tsx` 子进程设置 TZ 环境变量，
@@ -120,12 +316,20 @@ function runInTz(tz: string, fixedIso: string): string {
 
 // ⚠️ 三个固定时刻都**显式带 Z**，不受运行机器时区影响
 //
-//   LATE   = 2026-10-11T23:30:00Z
-//            UTC 10-11 | UTC+8 已是 10-12（**本地领先 UTC**）| UTC-5 仍是 10-11
-//   EARLY  = 2026-10-11T02:00:00Z
-//            UTC 10-11 | UTC+8 仍是 10-11（**本地与 UTC 同日**）| UTC-5 是 10-10（**本地落后 UTC**）
+//   LATE     = 2026-10-11T23:30:00Z
+//              UTC 10-11 | UTC+8 已是 10-12（**本地领先 UTC**）| UTC-5 仍是 10-11
+//   EARLY    = 2026-10-11T02:00:00Z
+//              UTC 10-11 | UTC+8 仍是 10-11（**本地与 UTC 同日**）| UTC-5 是 10-10（**本地落后 UTC**）
+//   FAR_PAST = 2026-10-09T02:00:00Z
+//              与 LATE 相差 69.5 小时。
+//              它**专供本进程自检**使用：
+//              LATE / EARLY 只相隔 21.5 小时，在 UTC 时区下同属一天，
+//              不能用于"两个时刻必须得到不同日期"这类与时区无关的断言；
+//              FAR_PAST 与 LATE 相隔 > 24 小时，在**任何时区**下都不同日
+//              （已用 UTC / UTC+8 / UTC-5 / UTC+14 / UTC-11 等边界时区核实）。
 const LATE = '2026-10-11T23:30:00Z'
 const EARLY = '2026-10-11T02:00:00Z'
+const FAR_PAST = '2026-10-09T02:00:00Z'
 
 /* ---------- 场景 1：本地领先 UTC（UTC+8 在 LATE）---------- */
 const p8Late = runInTz('Asia/Shanghai', LATE)
@@ -209,11 +413,52 @@ ok('子进程 UTC+8 下真实 todayDateString 结果 = 2026-10-12（本地而非
   realTodayInTz === '2026-10-12', `${realTodayInTz}`)
 info('子进程 UTC+8 的 todayDateString', realTodayInTz)
 
-// 同进程内直接传参调用（不经子进程）也应得到相同结果
+// ---------- 本进程直接注入固定时刻（不经过子进程）----------
+//
+// ⚠️ 时区前提（务必分清两类测试）：
+//
+//   1. 子进程测试（本节上方场景 1/2/3）
+//      通过 `env: { TZ: ... }` **显式指定**时区，结果只取决于传入的 TZ，
+//      与执行机器的时区无关。
+//
+//   2. 本进程调用（下面这几条）
+//      `todayDateString()` 使用**执行机器的本地时区**，结果**随机器时区变化**。
+//      因此这里**不能**把本进程结果与"固定 UTC+8 的子进程结果"比较 ——
+//      那种比较只在机器恰好是 UTC+8 时成立，其他时区必然失败。
+//      正确做法是把本进程结果与"用同一台机器的时区算出的期望值"比较。
+const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+
 const directInjected = todayDateString(new Date(LATE))
-info('本进程 todayDateString(2026-10-11T23:30:00Z)', directInjected)
-ok('★ 直接注入固定时刻与子进程结果一致（当前机器 TZ 下）',
-  directInjected === realTodayInTz || true, `本进程=${directInjected} 子进程(UTC+8)=${realTodayInTz}`)
+info('本进程 todayDateString(LATE)（使用执行机器时区 ' + localTz + '）', directInjected)
+ok('★ 注入固定时刻返回合法日期',
+  /^\d{4}-\d{2}-\d{2}$/.test(directInjected), `${directInjected}`)
+
+// 与"同一机器时区下的日历日"比较：任何时区下都应成立（可移植）
+ok('★ 注入 LATE 的结果 = 执行机器本地时区的日历日',
+  directInjected === ymdInTz(LATE, localTz),
+  `实测=${directInjected} 期望=${ymdInTz(LATE, localTz)} 时区=${localTz}`)
+
+/* ---------- ★ 断言有效性自检：证明"注入参数"真的被使用 ---------- */
+//
+// 目的：防止"注入固定时刻"这类断言退化成恒真条件。
+//
+// 若 todayDateString 忽略了传入的 Date（例如返回常量、或总是取当前时间），
+// 那么对两个**相隔足够远**的时刻注入结果就会相同 —— 下面这条断言随即失败。
+//
+// ⚠️ 必须用 FAR_PAST 而不是 EARLY：
+//    LATE 与 EARLY 仅相隔 21.5 小时，在 UTC 时区下同属一天，
+//    用它做自检会在 UTC 机器上误报失败。
+//    FAR_PAST 与 LATE 相隔 69.5 小时，在任何时区下都不同日。
+const injectedFarPast = todayDateString(new Date(FAR_PAST))
+info('本进程 todayDateString(FAR_PAST) 结果', injectedFarPast)
+ok('★★ 断言有效性自检：注入两个相隔 >24h 的时刻必须得到不同日期（否则说明参数被忽略）',
+  directInjected !== injectedFarPast,
+  `LATE→${directInjected}  FAR_PAST→${injectedFarPast}  时区=${localTz}`)
+
+// 同时验证 FAR_PAST 的注入结果也等于其本地时区日历日（不只是"互不相等"）
+ok('★ 注入 FAR_PAST 的结果 = 执行机器本地时区的日历日',
+  injectedFarPast === ymdInTz(FAR_PAST, localTz),
+  `实测=${injectedFarPast} 期望=${ymdInTz(FAR_PAST, localTz)} 时区=${localTz}`)
 
 // 默认无参调用仍等于系统本地今天
 ok('无参调用 = 系统本地今天',
