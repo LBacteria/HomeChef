@@ -9,9 +9,39 @@ build/
 server/data/
 
 # 环境变量（可能包含密钥，不得提交）
+# ⚠️ .env.example 等示例文件**故意放行**（见下方 ! 规则）
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+
+# 密钥 / 证书 / 凭据
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+*.ppk
+credentials.json
+secrets.json
+.npmrc
+.netrc
+_netrc
+.htpasswd
+
+# 备份文件
+*.bak
+*.backup
+*.orig
+*~
 
 # 日志
 *.log

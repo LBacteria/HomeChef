@@ -254,3 +254,15 @@ npx tsx verify-v013.ts
 ## 项目原则
 
 > 先做出一个真正能用的 HomeChef，再让它变得更复杂。
+
+---
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。
+
+```
+Copyright (c) 2026 LBacteria
+```
+
+你可以自由使用、修改、分发本项目，包括用于商业用途，只需保留版权声明与许可证文本。
