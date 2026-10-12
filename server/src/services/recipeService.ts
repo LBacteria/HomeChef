@@ -86,7 +86,12 @@ function loadTagsOf(recipeId: number): string[] {
 
 /** 列表查询选项（批次 3） */
 export interface RecipeListQuery {
-  /** 搜索词：同时匹配菜谱名称与 Tag 名称；空/未传 = 不搜索 */
+  /**
+   * 搜索词：**只匹配菜谱名称**（大小写不敏感的子串匹配）。
+   *
+   * ⚠️ Tag 名称**不参与**搜索 —— Tag 只通过下方的 `tagNames` 做筛选。
+   * 空 / 未传 = 不搜索；搜索与 Tag 筛选同时使用时为 **AND** 关系。
+   */
   search?: string
   /** 选中的 Tag 名称列表；空数组 = 不做 Tag 筛选 */
   tagNames?: string[]

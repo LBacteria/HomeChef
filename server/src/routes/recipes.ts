@@ -145,7 +145,7 @@ export function registerRecipeRoutes(app: FastifyInstance): void {
    * 列出菜谱（含 Tag 与食材数量），支持搜索、Tag 筛选与排序。
    *
    * query 参数（全部可选）：
-   *   search    搜索词，同时匹配菜谱名称与 Tag 名称（大小写不敏感）
+   *   search    搜索词，**只匹配菜谱名称**（大小写不敏感；⚠️ Tag 名称不参与搜索）
    *   tags      选中的 Tag 名称，可重复或逗号分隔
    *   tag_mode  'and'（默认）| 'or'
    *   sort      'updated_at'（默认）| 'created_at' | 'name'

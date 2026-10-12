@@ -2,7 +2,10 @@
 
 > **目标版本**：v0.2.0
 > **当前基线**：v0.1.4（提交 `424b26e`）
-> **状态**：**规划中，尚未开始实施**
+> **状态**：**进行中，已部分实现**
+> **已实现**：批次 1～3（后端 API）、批次 4.1 / 4.2（菜谱列表、名称搜索、Tag 筛选、
+> 排序、设置持久化、新建菜谱）与库存搜索
+> **尚未实现**：菜谱详情页、编辑与删除的前端 UI
 > **产品需求**：见 [`PROJECT_SPEC.md`](./PROJECT_SPEC.md) 第 **4.2 节**
 
 ---
@@ -98,7 +101,11 @@
 
 ### 1.6 搜索、筛选与排序
 
-**搜索**：同时匹配**菜谱名称**与 **Tag**。
+**搜索**：**只匹配菜谱名称** —— 大小写不敏感、按子字符串匹配。
+
+> ⚠️ **Tag 名称不参与搜索**（v0.2.0 产品决策）。
+> 搜索与 Tag 筛选是**两个独立能力**：想按 Tag 找菜谱应使用下方的 Tag 筛选。
+> **搜索与 Tag 筛选同时使用时，两者之间为 AND 关系。**
 
 **Tag 筛选**：
 
@@ -267,17 +274,17 @@
 
 | 项 | 内容 |
 |---|---|
-| **目标** | 名称/Tag 搜索、Tag 筛选（AND/OR）、三种排序 + 持久化 |
+| **目标** | **名称**搜索、Tag 筛选（AND/OR）、三种排序 + 持久化 |
 | **数据库** | 新增 migration **`0008_recipe_list_settings.sql`**，**复用现有 `app_settings` 单行表**（不新建独立表），新增 4 个可空列：<br>· `recipe_sort_field` TEXT NULL<br>· `recipe_sort_order` TEXT NULL<br>· `recipe_tag_mode` TEXT NULL<br>· `recipe_selected_tags` TEXT NULL —— **JSON 数组字符串**，如 `["家常菜","快手"]` |
 | **复用依据** | `app_settings` 已是「应用级单行设置」表（`CHECK id = 1`），Service 采用「默认值在 Service + UPSERT + 二次校验」模式，**语义一致，无实质冲突**；已有 `0006` 的 `ALTER TABLE ADD COLUMN` 先例 |
 | **默认值** | **默认 AND 模式** + **最近修改时间倒序**（默认值定义在 **Service 层**，与现有 `DEFAULT_APP_SETTINGS` 一致） |
 | **JSON 校验要求** | ⚠️ `recipe_selected_tags` 必须**严格校验**：<br>· 写入时：必须是字符串数组，否则 400<br>· **读取时**：若 JSON 解析失败、不是数组、或元素不是字符串 → **回退为空数组**（不抛错、不影响其他设置）<br>· 需**兼容旧数据**（列为 NULL → 空数组）<br>· 需**清理不存在的 Tag id/名称**（Tag 被删除后旧筛选条件不应报错） |
 | **后端新增** | `recipeService`：`searchRecipes`（含 Tag 筛选与排序）<br>`recipeListSettingsService`：读写列表设置 |
 | **API** | `GET /api/recipes?search=&tags=&tag_mode=&sort=&order=`<br>`GET /api/recipe-list-settings`<br>`PATCH /api/recipe-list-settings` |
-| **业务规则** | ① 搜索匹配**名称 + Tag**<br>② **AND**：包含所有选中 Tag；**OR**：包含任一<br>③ **默认 AND**<br>④ 排序：`updated_at` / `created_at` / `name`，升降序<br>⑤ **默认最近修改倒序**<br>⑥ 设置**持久化到数据库** |
+| **业务规则** | ① 搜索**只匹配名称**（大小写不敏感的子串匹配；⚠️ Tag 名称**不参与**）<br>② **AND**：包含所有选中 Tag；**OR**：包含任一<br>③ **默认 AND**<br>④ 排序：`updated_at` / `created_at` / `name`，升降序<br>⑤ **默认最近修改倒序**<br>⑥ 设置**持久化到数据库**<br>⑦ 搜索与 Tag 筛选同时使用时为 **AND** 关系 |
 | **前端** | ❌ 无 |
-| **测试** | `server/verify-recipe-batch3.ts`：搜索匹配名称/Tag、AND/OR 语义、三种排序与方向、默认值、设置持久化（重启后恢复）、**JSON 异常数据回退**（写入非法 JSON 后读取应回退为空数组且不报错） |
-| **验收标准** | ① 搜索命中名称与 Tag<br>② **AND 与 OR 结果集确实不同**（构造可区分的数据）<br>③ 排序三字段 × 两方向结果正确<br>④ 未设置时返回默认（**最近修改倒序 + AND**）<br>⑤ **设置写入后重新读取保持不变**<br>⑥ **损坏/旧的 `recipe_selected_tags` 数据不导致 500**（回退为空数组）<br>⑦ 任一项失败 → 按 **§5.1 停止并报告** |
+| **测试** | `server/verify-recipe-batch3.ts`：搜索**只匹配名称**（含「Tag 名不参与搜索」的反证断言）、AND/OR 语义、三种排序与方向、默认值、设置持久化（重启后恢复）、**JSON 异常数据回退**（写入非法 JSON 后读取应回退为空数组且不报错） |
+| **验收标准** | ① 搜索**只命中名称**（用 Tag 名搜索应得 0 条）<br>② **AND 与 OR 结果集确实不同**（构造可区分的数据）<br>③ 排序三字段 × 两方向结果正确<br>④ 未设置时返回默认（**最近修改倒序 + AND**）<br>⑤ **设置写入后重新读取保持不变**<br>⑥ **损坏/旧的 `recipe_selected_tags` 数据不导致 500**（回退为空数组）<br>⑦ 任一项失败 → 按 **§5.1 停止并报告** |
 | **不含** | UI、库存联动 |
 
 ---
