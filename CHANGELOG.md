@@ -6,7 +6,67 @@ HomeChef 的版本变更记录。
 
 ## [Unreleased]
 
+（暂无）
+
+---
+
+## [0.2.0] - 2026-10-12
+
+菜谱模块（Phase 3）与库存搜索。
+
+> ⚠️ 本版本**不包含**菜谱推荐、库存联动（判断能否制作）、AI、购物清单、
+> 库存扣减、份数系统、照片与完整制作流程编辑 —— 见 `PROJECT_SPEC.md` 4.2.8。
+
+### Added
+
+**菜谱模块（Phase 3）**
+
+- 数据库新增四张表：`recipe`（菜谱主表）、`recipe_ingredient`（菜谱与食材定义的关系，
+  **允许重复关联同一食材**）、`recipe_tag`（Tag）、`recipe_tag_link`（菜谱与 Tag 的关系），
+  迁移文件 `0007_recipe.sql`。详见 `DATABASE_DESIGN.md` 第 16 节
+- 菜谱列表设置持久化：复用单行表 `app_settings` 新增 4 个可空列
+  （`recipe_sort_field` / `recipe_sort_order` / `recipe_tag_mode` / `recipe_selected_tags`），
+  迁移文件 `0008_recipe_list_settings.sql`
+- 后端菜谱 API：`GET /api/recipes`、`GET /api/recipes/:id`、`POST /api/recipes`、
+  `PATCH /api/recipes/:id/full`（统一保存）、`DELETE /api/recipes/:id`，
+  以及 `GET /api/tags`、`POST /api/tags`、`DELETE /api/tags/:id`、
+  `GET /api/recipe-list-settings`、`PATCH /api/recipe-list-settings`
+- **菜谱页面**（三行布局）：
+  - 第一行：「新建菜谱」入口
+  - 第二行：**名称搜索**（左）+ 排序控件（右）
+  - 第三行：已选 Tag（左）+「选择 Tag」按钮（右）
+- **名称搜索**：只匹配菜谱名称，大小写不敏感、子字符串匹配
+- **Tag 筛选**：独立弹窗，支持多选、**AND / OR** 模式、新建 Tag、取消与确认；
+  支持逐个移除已选 Tag
+- **排序**：最近修改时间 / 创建时间 / 菜谱名称 × 升序降序
+- **列表设置持久化**：排序字段、排序方向、Tag 选择与 AND/OR 模式写入数据库，
+  刷新后保留；**搜索词不持久化**
+- **新建菜谱**：名称、描述、多项配料（食材 + 数量 + 单位 + 备注，**允许重复选择同一食材**）、
+  Tag 多选；保存失败保留输入，可重试
+- **菜谱详情页**：展示名称、描述、Tag、食材（名称 / 数量 / 单位 / 备注 / 顺序），
+  并对无描述 / 无食材 / 无 Tag 给出明确提示
+- **菜谱编辑**：从详情进入，完整回填原有数据，可增删改食材行与 Tag；
+  取消不产生任何写入
+- **菜谱删除**：详情页入口 + 二次确认；取消确认不调用删除 API
+- **库存搜索**：库存页新增搜索栏，按库存记录对应的食材名称做本地过滤，
+  与分类筛选、排序并行工作
+
+### Changed
+
+- 导航顺序为 **库存 / 食材库 / 菜谱 / 设置**（新增「菜谱」入口）
+- **菜谱名称搜索不再匹配 Tag 名称**（产品决策变更）：
+  搜索与 Tag 筛选为两个独立能力，Tag 名只能通过 Tag 筛选命中；
+  搜索与 Tag 筛选同时使用时为 **AND** 关系
+
 ### Fixed
+
+**Chrome 误识别车牌号**
+
+- 菜谱新建/编辑表单中的数量输入框原先为「无 `name` + `type=text` + `placeholder=数量`」，
+  Chrome 155 的 Autofill 服务端启发式会把**第二个**数量框预测为
+  `VEHICLE_LICENSE_PLATE`（车牌号），提交时弹出「保存车牌号」提示。
+  现为数量框补充语义明确的 `name`、`autocomplete="off"` 与数字输入类型
+  （`type="number"` + `step="any"` + `min="0"`），并隐藏原生 spinner
 
 **日期计算基准**
 
@@ -30,6 +90,17 @@ HomeChef 的版本变更记录。
   （临时库未跑 seed，原断言缺少"分类仍被使用"的前提）
 - `server/verify-dates.ts` 去除一处恒真断言（`|| true`），
   并新增辅助函数 `pickYmd()` 的字段缺失 / 空字符串 / 位数异常分支测试
+
+**保存重复提交**
+
+- 菜谱表单的保存按钮仅依赖 `disabled={saving}` 防重，而 React 状态更新是异步的，
+  同一事件循环内的连续点击会重复提交（实测同步连点 5 次产生 5 个 POST）。
+  现改用组件内的**同步提交锁**（`submittingRef`），连点只产生 1 次请求
+
+**详情请求竞态**
+
+- 菜谱详情请求新增序号校验丢弃过期响应；组件卸载时一并失效在途请求，
+  避免写入已卸载组件
 
 ---
 

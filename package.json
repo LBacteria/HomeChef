@@ -1,8 +1,8 @@
 {
   "name": "homechef",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": true,
-  "description": "HomeChef 库存系统 v0.1 —— 本地家庭食材库存管理",
+  "description": "HomeChef —— 本地家庭食材库存与菜谱管理",
   "license": "MIT",
   "workspaces": [
     "client",

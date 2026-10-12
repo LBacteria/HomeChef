@@ -1,14 +1,16 @@
 # HomeChef 系统架构
 
 > 状态：Draft
-> 日期：2026-10-02
-> 适用范围：**库存系统 v0.1（当前已实现）**
+> 日期：2026-10-02（v0.2.0 章节补充于 2026-10-12）
+> 适用范围：**库存系统 v0.1 + 菜谱模块 v0.2.0（当前已实现）**
 
 ## 0. 本文档的范围
 
-本文档描述 **HomeChef 库存系统 v0.1** 的系统架构，与实际实现保持一致。
+本文档描述 **HomeChef v0.2.0** 的系统架构，与实际实现保持一致。
 
-v0.1 只做「家庭食材库存系统」，不包含菜谱、推荐、AI、采购清单。
+v0.1 实现「家庭食材库存系统」；**v0.2.0 增加菜谱模块**（菜谱 CRUD、多 Tag、
+名称搜索、Tag 筛选、排序、列表设置持久化，以及详情 / 编辑 / 删除界面）与**库存搜索**。
+推荐、AI、采购清单仍未实现。
 
 关于完整 HomeChef 的长期目标，见 `PROJECT_SPEC.md`。
 关于技术选型理由，见 `TECH_STACK.md`。
@@ -27,12 +29,23 @@ v0.1 只做「家庭食材库存系统」，不包含菜谱、推荐、AI、采�
 9. 到期日期自动估算与来源追踪（`estimated` / `manual`）
 10. 数量与单位校验
 
-### v0.1 明确不做
+### v0.2.0 新增
 
-菜谱、菜谱匹配、推荐、DeepSeek AI、采购清单、多用户、
-图片识别、条码识别，以及其他未明确的需求。
+1. 菜谱主表与食材组成（**允许重复关联同一食材**，按添加顺序展示）
+2. 多 Tag 标签系统（自由创建 + 复用已有；同名不重复）
+3. 菜谱**名称搜索**（只匹配名称，Tag 名称不参与）
+4. Tag 筛选（**AND / OR**，默认 AND，可在选择窗口中切换）
+5. 菜谱列表排序（最近修改 / 创建 / 名称 × 升降序）与**设置持久化**
+6. **菜谱详情 / 编辑 / 删除**的前端界面
+7. 库存搜索（按库存记录对应的食材名称本地过滤）
 
-架构上不预留这些功能的表或接口。
+### v0.2.0 仍不做
+
+菜谱推荐、根据库存判断能否制作（库存联动）、DeepSeek AI、采购清单、多用户、
+图片识别、条码识别、菜谱份数 / 照片 / 完整制作流程编辑，
+以及其他未明确的需求。
+
+架构上不为这些未实现功能预留表或接口。
 
 ---
 
@@ -516,7 +529,8 @@ COMMIT
 **说明：**
 
 - 一律返回 JSON
-- **不为菜谱、推荐、采购清单预留任何接口**
+- 菜谱相关接口见 **第 15 节**
+- **不为推荐、采购清单等未实现功能预留任何接口**
 - v0.1 **没有**独立的名称解析接口（解析由 Service 内部使用）
 
 ---
@@ -848,14 +862,83 @@ updated_at
 
 ---
 
-## 15. 后续阶段
+## 15. 菜谱模块（v0.2.0）
+
+### 15.1 分层
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 路由层 | `server/src/routes/recipes.ts` | query / body schema 校验（`additionalProperties: false`）、错误映射 |
+| 业务层 | `server/src/services/recipeService.ts` | 列表、详情、新建、**统一保存**、删除、Tag 关联、搜索 / 筛选 / 排序 |
+| 业务层 | `server/src/services/recipeListSettingsService.ts` | 列表设置读写（**复用 `app_settings` 单行表**，不新建独立表） |
+| 数据层 | `server/drizzle/0007_recipe.sql`、`0008_recipe_list_settings.sql` | 四张新表 + `app_settings` 4 个可空列 |
+| 前端 | `client/src/pages/RecipesPage.tsx` 等 | 列表 / 详情 / 表单 / Tag 弹窗 |
+
+### 15.2 数据模型
+
+- `recipe` —— 菜谱主表（名称唯一）
+- `recipe_ingredient` —— 菜谱与食材定义的关系，
+  **允许重复关联同一食材**，按 `sort_order` 固定展示顺序
+- `recipe_tag` —— Tag（同名不重复）
+- `recipe_tag_link` —— 菜谱与 Tag 的多对多关系
+
+字段与约束详见 `DATABASE_DESIGN.md` 第 16 节。
+
+### 15.3 API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/recipes` | 列表（`search` / `tags`（可重复）/ `tag_mode` / `sort` / `order`） |
+| GET | `/api/recipes/:id` | 详情（含食材明细与 Tag） |
+| POST | `/api/recipes` | 新建（**单事务**：菜谱 + 食材关联 + Tag 关联） |
+| PATCH | `/api/recipes/:id/full` | **统一保存**（基本信息 + 食材关联 + Tag 关联，单事务） |
+| DELETE | `/api/recipes/:id` | 删除菜谱**及其关联**（不删除食材定义，也不删除 Tag 本身） |
+| GET | `/api/tags` | Tag 列表 |
+| POST | `/api/tags` | 新建 Tag（同名返回 `DUPLICATE_NAME`） |
+| DELETE | `/api/tags/:id` | 删除 Tag |
+| GET | `/api/recipe-list-settings` | 读取列表设置 |
+| PATCH | `/api/recipe-list-settings` | 更新列表设置（部分更新） |
+
+> ⚠️ `PATCH /api/recipes/:id/full` 采用「**全删后重建**」实现关联更新，
+>    因此返回详情中的 `recipe_ingredient.id` 会变化 —— 前端**不得**用它做渲染 key。
+
+### 15.4 搜索与筛选语义（重要）
+
+- **搜索只匹配菜谱名称**（大小写不敏感、子字符串匹配）
+- **Tag 名称不参与搜索**；Tag 只通过 `tags` 参数筛选
+- 搜索与 Tag 筛选同时使用时为 **AND** 关系
+- Tag 筛选支持 **AND / OR**（默认 AND，可在选择窗口切换并持久化）
+
+### 15.5 前端组件
+
+| 文件 | 职责 |
+|---|---|
+| `client/src/pages/RecipesPage.tsx` | 列表 / 详情视图切换、搜索防抖、请求序号竞态保护、设置串行化持久化 |
+| `client/src/components/RecipeDetailView.tsx` | 详情只读展示（含空数据提示） |
+| `client/src/components/RecipeCreateForm.tsx` | **新建与编辑共用**（`initial` 决定模式），含同步提交锁 |
+| `client/src/components/RecipeFilterBar.tsx` | 名称搜索 + 排序行、已选 Tag + 选择入口行 |
+| `client/src/components/TagSelectDialog.tsx` | 独立 Tag 选择弹窗（多选 / AND-OR / 新建 Tag） |
+| `client/src/components/RecipeList.tsx` | 列表渲染 |
+
+### 15.6 已知未覆盖（不阻塞发布）
+
+- **快速切换菜谱的竞态窗口未能在浏览器中制造**（详情加载中界面只渲染「加载中…」，
+  没有返回入口），代码层面已用请求序号 + 卸载时失效在途请求保护
+- **中文 IME 组合输入**与**键盘可达性**（Tab 顺序、`Escape` 关闭弹窗）未专门验证；
+  既有弹窗同样不具备焦点陷阱，属项目现状
+
+---
+
+## 16. 后续阶段
 
 以下内容**尚未实现**，在后续阶段确定：
 
-- 菜谱（Recipe）、菜谱匹配、推荐 ← **v0.2.0 计划**
+- 根据库存判断菜谱能否制作（库存联动）
+- 菜品推荐（meal recommendation）
 - DeepSeek AI 接入
 - 采购清单
 - 消耗历史记录
 - 单位换算
 - 食材定义合并
 - 录入时的名称解析实时预览接口
+- 菜谱份数系统、照片上传、完整制作流程编辑

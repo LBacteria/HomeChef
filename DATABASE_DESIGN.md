@@ -906,13 +906,13 @@ recipe ──1:N──> recipe_ingredient ──N:1──> ingredient_definition
 > ⚠️ 菜谱相关错误**不复用** `INGREDIENT_NOT_FOUND`（语义不同）。
 > 映射见 `server/src/routes/http.ts` 的 `STATUS_BY_CODE`。
 
-### 16.9 与 `app_settings` 的关系（批次 3 预告）
+### 16.9 与 `app_settings` 的关系（批次 3，已实现）
 
-批次 3 将**复用 `app_settings` 单行表**，通过 `0008_recipe_list_settings.sql`
+批次 3 **复用 `app_settings` 单行表**，通过 `0008_recipe_list_settings.sql`
 新增 4 个可空列（`recipe_sort_field` / `recipe_sort_order` / `recipe_tag_mode` /
 `recipe_selected_tags`），**不新建独立设置表**。
 
-> 本批次（1）**不含**这些列。
+> 上述 4 列已随 **v0.2.0** 落地；`0007`（批次 1）本身不含这些列。
 
 ### 16.10 明确不包含的内容
 
