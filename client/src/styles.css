@@ -2023,3 +2023,140 @@ button.danger:hover:not(:disabled) {
   max-width: 420px;
   margin-bottom: 10px;
 }
+
+/* ============================================================
+ * 菜谱详情视图（批次 4 剩余功能）
+ * ============================================================ */
+
+.recipe-detail {
+  margin-top: 4px;
+}
+
+.recipe-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.recipe-detail-back {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.recipe-detail-back:hover {
+  background: #f4f4f4;
+}
+
+.recipe-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recipe-detail-actions button {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.recipe-detail-actions button:hover {
+  background: #f4f4f4;
+}
+
+.recipe-detail-actions button.danger:hover {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.recipe-detail-name {
+  margin: 0 0 16px;
+  font-size: 1.35rem;
+}
+
+.recipe-detail-section {
+  margin-bottom: 20px;
+}
+
+.recipe-detail-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.recipe-detail-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fafafa;
+  white-space: pre-wrap;
+}
+
+/* 菜谱详情空数据提示（无描述 / 无食材 / 无 Tag）
+   ⚠️ 带 `.recipe-detail-` 命名空间，避免与其它页面的通用类名冲突 */
+.recipe-detail-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.recipe-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recipe-detail-ingredients {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recipe-detail-ingredient {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.recipe-detail-ing-index {
+  flex: 0 0 auto;
+  width: 18px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.recipe-detail-ing-name {
+  font-weight: 600;
+}
+
+.recipe-detail-ing-amount {
+  color: #2e7d32;
+  font-size: 0.9rem;
+}
+
+.recipe-detail-ing-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+}

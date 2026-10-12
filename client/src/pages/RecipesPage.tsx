@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { listRecipes } from '../api/recipes'
+import { listRecipes, getRecipe, deleteRecipe } from '../api/recipes'
 import { listTags } from '../api/tags'
 import {
   getRecipeListSettings,
   updateRecipeListSettings,
 } from '../api/recipeListSettings'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog'
 import RecipeCreateForm from '../components/RecipeCreateForm'
+import RecipeDetailView from '../components/RecipeDetailView'
 import RecipeFilterBar from '../components/RecipeFilterBar'
 import RecipeList from '../components/RecipeList'
 import TagSelectDialog from '../components/TagSelectDialog'
@@ -81,6 +83,20 @@ export default function RecipesPage() {
   /* ---------- 弹窗 ---------- */
   const [tagDialogOpen, setTagDialogOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+
+  /* ---------- 详情 / 编辑 / 删除（批次 4 剩余功能）---------- */
+  /** 当前查看的菜谱详情；null 且不在加载中 = 处于列表视图 */
+  const [detail, setDetail] = useState<RecipeDetail | null>(null)
+  /** 正在查看/加载的菜谱 id（加载失败时用于重试） */
+  const [detailId, setDetailId] = useState<number | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  /** 非 null = 打开编辑弹窗（传入待编辑的详情用于回填） */
+  const [editing, setEditing] = useState<RecipeDetail | null>(null)
+  /** 非 null = 打开删除确认弹窗 */
+  const [deleteTarget, setDeleteTarget] = useState<RecipeDetail | null>(null)
+  /** 详情请求竞态（避免旧响应覆盖新详情） */
+  const detailSeq = useRef(0)
 
   /* ---------- 提示 ---------- */
   const [settingsError, setSettingsError] = useState<string | null>(null)
@@ -356,29 +372,95 @@ export default function RecipesPage() {
     return true
   }
 
-  /** 新建成功 */
-  function handleCreated(detail: RecipeDetail) {
-    setCreateOpen(false)
-    // 重新拉取列表（沿用当前筛选与排序）
-    void fetchRecipes({ search, selectedTags, tagMode, sortField, sortOrder })
+  /** 打开菜谱详情（真实从后端加载，不用列表里的摘要数据拼凑） */
+  async function openDetail(id: number) {
+    const seq = ++detailSeq.current
+    // ⚠️ 列表的 Tag 筛选弹窗属于列表视图，进入详情时必须关闭，避免残留悬浮
+    setTagDialogOpen(false)
+    setDetailId(id)
+    setDetailLoading(true)
+    setDetailError(null)
+    setDetail(null)
 
-    // 若当前筛选条件会让新菜谱不可见，明确告知，避免误以为保存失败
-    if (!isVisibleUnderCurrentFilter(detail)) {
-      setNotice(`「${detail.name}」已保存，但当前搜索或 Tag 筛选条件下不会显示。`)
-    } else {
-      setNotice(`「${detail.name}」已保存。`)
+    try {
+      const data = await getRecipe(id)
+      // ⚠️ 过期响应丢弃
+      if (seq !== detailSeq.current) return
+      setDetail(data)
+    } catch (e) {
+      if (seq !== detailSeq.current) return
+      setDetailError(e instanceof ApiError ? e.message : '加载菜谱详情失败，请稍后重试。')
+    } finally {
+      if (seq === detailSeq.current) {
+        setDetailLoading(false)
+      }
     }
   }
 
-  /** 阶段 4.3 才实现详情跳转；此处占位 */
-  function handleSelect(_recipe: RecipeSummary) {
-    /* no-op */
+  /** 返回列表（丢弃详情与编辑状态） */
+  function backToList() {
+    detailSeq.current++
+    setDetail(null)
+    setDetailError(null)
+    setDetailLoading(false)
+    setEditing(null)
+    // ⚠️ 返回列表时同样关闭 Tag 弹窗，保持状态干净
+    setTagDialogOpen(false)
+  }
+
+  /**
+   * 保存成功（**新建与编辑共用**）。
+   *
+   * - 刷新列表（沿用当前筛选与排序）
+   * - 编辑：重新拉取详情，让详情页反映最新数据
+   * - 新建：给出可见性反馈
+   */
+  function handleSaved(saved: RecipeDetail) {
+    const wasEdit = editing !== null
+
+    setCreateOpen(false)
+    setEditing(null)
+    void fetchRecipes({ search, selectedTags, tagMode, sortField, sortOrder })
+
+    if (wasEdit) {
+      void openDetail(saved.id)
+      setNotice(`「${saved.name}」已更新。`)
+      return
+    }
+
+    // 新建：若当前筛选条件会让新菜谱不可见，明确告知，避免误以为保存失败
+    if (!isVisibleUnderCurrentFilter(saved)) {
+      setNotice(`「${saved.name}」已保存，但当前搜索或 Tag 筛选条件下不会显示。`)
+    } else {
+      setNotice(`「${saved.name}」已保存。`)
+    }
+  }
+
+  /** 确认删除：调用真实 API，成功后回列表并刷新 */
+  async function handleConfirmDelete() {
+    if (deleteTarget === null) return
+
+    // ⚠️ 失败会抛出，由 ConfirmDeleteDialog 捕获并显示错误 —— 绝不假装成功
+    await deleteRecipe(deleteTarget.id)
+
+    const name = deleteTarget.name
+    setDeleteTarget(null)
+    backToList()
+    void fetchRecipes({ search, selectedTags, tagMode, sortField, sortOrder })
+    setNotice(`「${name}」已删除。`)
+  }
+
+  /** 从列表进入详情 */
+  function handleSelect(recipe: RecipeSummary) {
+    void openDetail(recipe.id)
   }
 
   /* ---------- 卸载清理 ---------- */
   useEffect(() => {
     return () => {
       requestSeq.current++
+      // ⚠️ 详情请求同样需要失效，否则卸载后返回的响应会写入已卸载组件
+      detailSeq.current++
       if (debounceTimer.current !== null) {
         clearTimeout(debounceTimer.current)
       }
@@ -388,8 +470,42 @@ export default function RecipesPage() {
   /* ============================================================
    * 渲染
    * ============================================================ */
+
+  /** 是否处于详情视图（详情已加载 / 正在加载 / 加载失败） */
+  const inDetail = detail !== null || detailLoading || detailError !== null
+
   return (
     <section className="recipe-page">
+      {/* ============================================================
+       * 详情视图（批次 4 剩余功能）
+       * ============================================================ */}
+      {inDetail ? (
+        <>
+          {detailLoading && <p className="status">加载中…</p>}
+
+          {!detailLoading && detailError !== null && (
+            <div className="load-error">
+              <p>{detailError}</p>
+              <button type="button" onClick={() => detailId !== null && void openDetail(detailId)}>
+                重试
+              </button>
+              <button type="button" onClick={backToList}>
+                返回列表
+              </button>
+            </div>
+          )}
+
+          {!detailLoading && detailError === null && detail !== null && (
+            <RecipeDetailView
+              detail={detail}
+              onBack={backToList}
+              onEdit={() => setEditing(detail)}
+              onDelete={() => setDeleteTarget(detail)}
+            />
+          )}
+        </>
+      ) : (
+        <>
       {/* ---------- 第一行：标题 + 新建菜谱 ---------- */}
       <div className="section-header">
         <h2>菜谱</h2>
@@ -435,16 +551,6 @@ export default function RecipesPage() {
         </div>
       )}
 
-      {/* 操作结果提示 */}
-      {notice !== null && (
-        <p className="recipe-notice" role="status">
-          {notice}
-          <button type="button" className="recipe-notice-close" onClick={() => setNotice(null)}>
-            ×
-          </button>
-        </p>
-      )}
-
       {/* 加载中 */}
       {loading && <p className="status">加载中…</p>}
 
@@ -474,6 +580,21 @@ export default function RecipesPage() {
       {!loading && listError === null && recipes.length > 0 && (
         <RecipeList recipes={recipes} onSelect={handleSelect} />
       )}
+        </>
+      )}
+
+      {/*
+        操作结果提示（列表与详情**共用**一处）：
+        ⚠️ 编辑保存成功后停留在详情视图，若只放在列表分支会导致提示不可见。
+      */}
+      {notice !== null && (
+        <p className="recipe-notice" role="status">
+          {notice}
+          <button type="button" className="recipe-notice-close" onClick={() => setNotice(null)}>
+            ×
+          </button>
+        </p>
+      )}
 
       {/* ---------- Tag 选择弹窗 ---------- */}
       <TagSelectDialog
@@ -488,13 +609,27 @@ export default function RecipesPage() {
         onConfirm={handleConfirmTags}
       />
 
-      {/* ---------- 新建菜谱表单 ---------- */}
+      {/* ---------- 菜谱表单（新建 / 编辑共用同一实现）---------- */}
       <RecipeCreateForm
-        open={createOpen}
+        open={createOpen || editing !== null}
         allTags={tags}
-        onCancel={() => setCreateOpen(false)}
-        onCreated={handleCreated}
+        initial={editing}
+        onCancel={() => {
+          setCreateOpen(false)
+          setEditing(null)
+        }}
+        onSaved={handleSaved}
       />
+
+      {/* ---------- 删除确认（复用既有 ConfirmDeleteDialog）---------- */}
+      {deleteTarget !== null && (
+        <ConfirmDeleteDialog
+          title="删除菜谱"
+          ingredientName={deleteTarget.name}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </section>
   )
 }

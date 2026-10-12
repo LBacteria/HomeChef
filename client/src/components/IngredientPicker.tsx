@@ -29,8 +29,15 @@ interface Props {
   value: number | ''
   /** 选中变化时回调；清空时传 null */
   onChange: (definition: IngredientDefinitionDetail | null) => void
-  /** 已选中的 definition（用于回显名称，可选） */
-  selected?: IngredientDefinitionDetail
+  /**
+   * 已选中的 definition（仅用于**回显名称与别名**，可选）。
+   *
+   * ⚠️ 这里刻意只要求 `name`（别名可选），而不是完整的 `IngredientDefinitionDetail`：
+   *    菜谱编辑回填时，数据来源是 `RecipeIngredientDetail`（只有 `definition_name`），
+   *    不需要为了回显再去拉一次完整定义。
+   *    `IngredientDefinitionDetail` 结构上兼容本类型，既有调用方不受影响。
+   */
+  selected?: { name: string; aliases?: Array<{ alias: string }> }
   /** 搜索框占位符 */
   placeholder?: string
   /** 是否自动聚焦 */
@@ -148,11 +155,11 @@ export default function IngredientPicker({
         <div className="picker-selected">
           <div className="picker-selected-main">
             <span className="picker-selected-name">{selected.name}</span>
-            {selected.aliases.length > 0 && (
+            {selected.aliases?.length ? (
               <span className="picker-selected-aliases">
                 {selected.aliases.map((a) => a.alias).join(' · ')}
               </span>
-            )}
+            ) : null}
           </div>
           {!disabled && (
             <div className="picker-selected-actions">

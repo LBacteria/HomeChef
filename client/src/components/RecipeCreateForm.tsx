@@ -1,17 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { createRecipe } from '../api/recipes'
+import { createRecipe, saveRecipeFull } from '../api/recipes'
 import { ApiError, UNITS } from '../types/api'
-import type {
-  IngredientDefinitionDetail,
-  RecipeDetail,
-  RecipeInput,
-  RecipeTagItem,
-} from '../types/api'
+import type { RecipeDetail, RecipeInput, RecipeTagItem } from '../types/api'
 import IngredientPicker from './IngredientPicker'
 
 /**
- * 新建菜谱表单（独立弹窗）。
+ * 菜谱表单（独立弹窗），**同时支持新建与编辑**。
  *
  * 字段与既有 schema 一致（`RecipeInput`）：
  *   - 菜谱名称（必填，同名后端返回 409 DUPLICATE_NAME）
@@ -20,21 +15,38 @@ import IngredientPicker from './IngredientPicker'
  *   - Tag 多选
  *
  * 关键行为：
+ *   - `initial` 为空 → **新建**（`POST /api/recipes`）
+ *   - `initial` 非空 → **编辑**（`PATCH /api/recipes/:id/full`，统一保存模式）
  *   - **保存失败保留用户输入**，可直接重试
- *   - **只有保存成功才关闭**并刷新列表
- *   - 取消不产生任何写入（不调用 API）
+ *   - **只有保存成功才关闭**并通知父级刷新
+ *   - 取消不产生任何写入（**不调用 API**）
  *   - 数量在草稿中是**字符串**，提交时转换；空串 → null
  *   - 单位可空；非空必须属于 10 个固定枚举之一
  *   - Tag 传**名称**（后端自动创建 / 复用）
  *   - 配料用**本地 key** 渲染（绝不用后端 id —— 保存后关联 id 会变）
  */
 
+/**
+ * 回显食材所需的最小信息。
+ *
+ * ⚠️ 编辑回填时数据来自 `RecipeIngredientDetail`（只有 `definition_name`），
+ *    因此这里只要求 `id` + `name`，不要求完整 `IngredientDefinitionDetail`。
+ *    `IngredientPicker` 的 `onChange` 会传回完整对象，结构上兼容本类型。
+ */
+interface PickedDefinition {
+  id: number
+  name: string
+  aliases?: Array<{ alias: string }>
+}
+
 interface Props {
   open: boolean
   allTags: RecipeTagItem[]
+  /** 编辑模式：传入待编辑的菜谱；新建模式传 null / 省略 */
+  initial?: RecipeDetail | null
   onCancel: () => void
-  /** 保存成功回调（父级据此关闭弹窗、刷新列表） */
-  onCreated: (detail: RecipeDetail) => void
+  /** 保存成功回调（新建与编辑共用；父级据此关闭弹窗、刷新列表/详情） */
+  onSaved: (detail: RecipeDetail) => void
 }
 
 /** 单条配料草稿 */
@@ -42,13 +54,13 @@ interface IngredientDraft {
   /** ⚠️ 本地渲染 key，仅前端使用，绝不传给后端 */
   key: string
   /**
-   * 选中的食材定义对象。
+   * 选中的食材（用于回显）。
    *
-   * ⚠️ 必须保存**完整对象**（而不是只存 id）：
+   * ⚠️ 必须保存**对象**（而不是只存 id）：
    *    `IngredientPicker` 用 `selected` prop 判断是否已选中并回显名称，
    *    只传 id 会导致选中后仍显示输入框。
    */
-  definition: IngredientDefinitionDetail | null
+  definition: PickedDefinition | null
   /** 数量草稿（字符串，提交时转换） */
   quantity: string
   /** 单位；'' 表示不填（提交为 null） */
@@ -81,7 +93,9 @@ function emptyIngredient(): IngredientDraft {
   }
 }
 
-export default function RecipeCreateForm({ open, allTags, onCancel, onCreated }: Props) {
+export default function RecipeCreateForm({ open, allTags, initial = null, onCancel, onSaved }: Props) {
+  const isEdit = initial !== null
+
   const [name, setName] = useState('')
   const [note, setNote] = useState('')
   const [ingredients, setIngredients] = useState<IngredientDraft[]>([emptyIngredient()])
@@ -90,6 +104,55 @@ export default function RecipeCreateForm({ open, allTags, onCancel, onCreated }:
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [nameError, setNameError] = useState<string | null>(null)
+
+  /**
+   * 提交锁（**同步**）。
+   *
+   * ⚠️ 仅靠 `disabled={saving}` 无法防止同一事件循环内的连点：
+   *    React 状态更新是异步的，重渲染前按钮仍是可点的。
+   */
+  const submittingRef = useRef(false)
+
+  /* ------------------------------------------------------------
+   * 打开时初始化草稿
+   *   新建 → 清空；编辑 → 回填持久化数据
+   *
+   * ⚠️ 依赖用 `open` 与 `initial?.id`（而不是 `initial` 对象引用）：
+   *    避免父组件重渲染时把用户正在编辑的草稿覆盖掉。
+   * ------------------------------------------------------------ */
+  useEffect(() => {
+    if (!open) return
+
+    if (initial) {
+      setName(initial.name)
+      setNote(initial.note ?? '')
+      setIngredients(
+        initial.ingredients.length > 0
+          ? initial.ingredients.map((ing) => ({
+              key: makeDraftKey(),
+              // ⚠️ 回填只需要 id + name（详情接口已给出 definition_name）
+              definition: { id: ing.definition_id, name: ing.definition_name },
+              quantity: ing.quantity === null ? '' : String(ing.quantity),
+              unit: ing.unit ?? '',
+              note: ing.note ?? '',
+            }))
+          : [emptyIngredient()],
+      )
+      setSelectedTags(initial.tags)
+    } else {
+      setName('')
+      setNote('')
+      setIngredients([emptyIngredient()])
+      setSelectedTags([])
+    }
+
+    setFormError(null)
+    setNameError(null)
+    setSaving(false)
+    // 打开/切换菜谱时释放提交锁，避免上一次的失败状态影响本次编辑
+    submittingRef.current = false
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initial?.id])
 
   if (!open) return null
 
@@ -167,7 +230,7 @@ export default function RecipeCreateForm({ open, allTags, onCancel, onCreated }:
         const raw = d.quantity.trim()
         return {
           // 上面的校验保证 definition 非 null
-          definition_id: (d.definition as IngredientDefinitionDetail).id,
+          definition_id: (d.definition as PickedDefinition).id,
           quantity: raw.length === 0 ? null : Number(raw),
           unit: d.unit === '' ? null : d.unit,
           note: d.note.trim().length === 0 ? null : d.note.trim(),
@@ -176,15 +239,29 @@ export default function RecipeCreateForm({ open, allTags, onCancel, onCreated }:
       tags: selectedTags,
     }
 
+    /*
+     * ⚠️ **同步守卫**（不能只靠 `disabled={saving}`）：
+     *    React 的 `setSaving(true)` 是异步的，重渲染之前按钮并未真正禁用，
+     *    同一事件循环内的连续点击会全部穿透，导致重复 POST/PATCH。
+     *    实测：同步连点 5 次 → 5 次请求；加本守卫后 → 1 次。
+     *    ref 是同步可读写的，作为提交锁；校验失败路径不会走到这里。
+     */
+    if (submittingRef.current) return
+    submittingRef.current = true
+
     setSaving(true)
     try {
-      const detail = await createRecipe(payload)
+      // ⚠️ 复用既有 API：编辑走统一保存 PATCH，新建走 POST
+      const detail = isEdit && initial
+        ? await saveRecipeFull(initial.id, payload)
+        : await createRecipe(payload)
+
       // ⚠️ 只有真正保存成功才关闭并通知父级刷新
       setName('')
       setNote('')
       setIngredients([emptyIngredient()])
       setSelectedTags([])
-      onCreated(detail)
+      onSaved(detail)
     } catch (e) {
       // ⚠️ 失败时**保留全部输入**，仅显示错误
       if (e instanceof ApiError && e.code === 'DUPLICATE_NAME') {
@@ -195,6 +272,8 @@ export default function RecipeCreateForm({ open, allTags, onCancel, onCreated }:
         setFormError('保存失败，请重试')
       }
     } finally {
+      // ⚠️ 无论成功或失败都释放提交锁，失败后用户可直接重试
+      submittingRef.current = false
       setSaving(false)
     }
   }
@@ -202,9 +281,9 @@ export default function RecipeCreateForm({ open, allTags, onCancel, onCreated }:
   /* ---------- 渲染 ---------- */
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="新建菜谱">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={isEdit ? '编辑菜谱' : '新建菜谱'}>
       <div className="modal recipe-create-modal">
-        <h2>新建菜谱</h2>
+        <h2>{isEdit ? '编辑菜谱' : '新建菜谱'}</h2>
 
         {/* 菜谱名称 */}
         <label className="field-block">

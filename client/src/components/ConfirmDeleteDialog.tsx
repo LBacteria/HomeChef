@@ -8,12 +8,25 @@ import { useState } from 'react'
  */
 
 interface Props {
+  /** 待删除对象的名称（用于确认文案） */
   ingredientName: string
+  /**
+   * 对话框标题。
+   *
+   * ⚠️ 默认「删除食材」以保持既有调用方行为不变；
+   *    菜谱删除等其它场景可传入自己的标题。
+   */
+  title?: string
   onConfirm: () => Promise<void>
   onCancel: () => void
 }
 
-export default function ConfirmDeleteDialog({ ingredientName, onConfirm, onCancel }: Props) {
+export default function ConfirmDeleteDialog({
+  ingredientName,
+  title = '删除食材',
+  onConfirm,
+  onCancel,
+}: Props) {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -32,7 +45,7 @@ export default function ConfirmDeleteDialog({ ingredientName, onConfirm, onCance
   return (
     <div className="modal-backdrop">
       <div className="modal">
-        <h2>删除食材</h2>
+        <h2>{title}</h2>
 
         <p>
           确定要删除「<strong>{ingredientName}</strong>」吗？
