@@ -280,6 +280,131 @@ export interface UpdateSettingsInput {
 }
 
 /* ============================================================
+ * 菜谱模块（v0.2.0 Phase 3）
+ *
+ * ⚠️ 与库存的 SortField / 食材库的 DefinitionSortField 都是**独立功能**，
+ *    因此菜谱排序字段单独定义，不复用上面任何一个。
+ * ============================================================ */
+
+/** 菜谱列表排序字段（与后端白名单一致） */
+export type RecipeSortField = 'updated_at' | 'created_at' | 'name'
+
+/** 菜谱列表排序方向（与后端白名单一致） */
+export type RecipeSortOrder = 'asc' | 'desc'
+
+/** Tag 多选筛选模式 */
+export type RecipeTagMode = 'and' | 'or'
+
+/**
+ * 菜谱列表项（GET /api/recipes 的元素）。
+ *
+ * ⚠️ 列表项有 `ingredient_count`，但**详情没有**。
+ */
+export interface RecipeSummary {
+  id: number
+  name: string
+  note: string | null
+  created_at: string
+  updated_at: string
+  /** 该菜谱的 Tag 名称列表 */
+  tags: string[]
+  /** 食材记录条数（同一食材重复添加会重复计数） */
+  ingredient_count: number
+}
+
+/**
+ * 详情中的一条食材记录。
+ *
+ * ⚠️ `id` 是数据库关联记录的 ID —— 统一保存采用「全删后重建」，
+ *    该 ID **不保证稳定**，前端**不得**用它作为 React key。
+ */
+export interface RecipeIngredientDetail {
+  id: number
+  definition_id: number
+  /** 食材定义的当前名称（由后端 join 提供，改名后自动跟随） */
+  definition_name: string
+  quantity: number | null
+  unit: string | null
+  /** 食材备注（与菜谱整体备注相互独立） */
+  note: string | null
+  /** 展示顺序，等于添加顺序 */
+  sort_order: number
+}
+
+/** 菜谱详情（GET /api/recipes/:id） */
+export interface RecipeDetail {
+  id: number
+  name: string
+  note: string | null
+  created_at: string
+  updated_at: string
+  tags: string[]
+  ingredients: RecipeIngredientDetail[]
+}
+
+/**
+ * 统一保存时的单条食材输入。
+ *
+ * ⚠️ 数量 / 单位 / 备注三者相互独立，均允许为 null。
+ */
+export interface RecipeIngredientInput {
+  definition_id: number
+  quantity?: number | null
+  unit?: string | null
+  note?: string | null
+}
+
+/**
+ * 新建 / 统一保存的请求体（POST 与 PATCH /:id/full 共用）。
+ *
+ * ⚠️ `tags` 传的是 **Tag 名称**；后端会自动创建不存在的 Tag、复用已存在的。
+ */
+export interface RecipeInput {
+  name: string
+  note?: string | null
+  /** 至少一条；允许重复引用同一个 definition_id */
+  ingredients: RecipeIngredientInput[]
+  tags?: string[]
+}
+
+/** 列表查询参数（GET /api/recipes） */
+export interface RecipeListQuery {
+  search?: string
+  /** Tag 名称列表；**用重复参数传递**，不拼逗号 */
+  tags?: string[]
+  tagMode?: RecipeTagMode
+  sortField?: RecipeSortField
+  sortOrder?: RecipeSortOrder
+}
+
+/** Tag（GET /api/tags 的元素） */
+export interface RecipeTagItem {
+  id: number
+  name: string
+  created_at: string
+}
+
+/**
+ * 菜谱列表设置（GET / PATCH /api/recipe-list-settings）。
+ *
+ * ⚠️ `selected_tags` 存的是 **Tag 名称**，不是 ID。
+ */
+export interface RecipeListSettings {
+  sort_field: RecipeSortField
+  sort_order: RecipeSortOrder
+  tag_mode: RecipeTagMode
+  selected_tags: string[]
+}
+
+/** 列表设置的部分更新输入（必须至少传一个字段） */
+export interface UpdateRecipeListSettingsInput {
+  sort_field?: RecipeSortField
+  sort_order?: RecipeSortOrder
+  tag_mode?: RecipeTagMode
+  selected_tags?: string[]
+}
+
+/* ============================================================
  * 错误
  * ============================================================ */
 

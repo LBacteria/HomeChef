@@ -107,8 +107,10 @@ export interface RecipeListQuery {
  *   - 不传任何参数时，等价于默认排序（最近修改倒序）
  *
  * 搜索规则：
+ *   - **只匹配菜谱名称**（v0.2.0 产品决策变更）
+ *     ⚠️ Tag 名称**不再**参与搜索匹配 —— Tag 只通过 `tagNames` 做筛选。
+ *        搜索与筛选是两个独立能力，互不混淆。
  *   - **在应用层使用 JavaScript `includes()` 过滤**（不经过 SQL）
- *   - 同时匹配**菜谱名称**与 **Tag 名称**（两者任一命中即算匹配）
  *   - 搜索词经过 trim；匹配**不区分大小写**
  *   - `%`、`_` 等字符按**普通字面量**处理 ——
  *     因为当前实现**没有使用 SQL LIKE**，不存在通配符语义
@@ -157,13 +159,14 @@ export function listRecipes(query: RecipeListQuery = {}): RecipeSummary[] {
     })
   }
 
-  /* ---------- 3. 搜索（名称 OR Tag 名称）---------- */
+  /* ---------- 3. 搜索（**只匹配菜谱名称**）----------
+   *
+   * ⚠️ v0.2.0 产品决策变更：Tag 名称**不再**参与搜索。
+   *    Tag 仅通过上方的 tagNames / tagMode 做筛选。
+   */
   if (search.length > 0) {
     const needle = search.toLowerCase()
-    rows = rows.filter((r) => {
-      if (r.name.toLowerCase().includes(needle)) return true
-      return loadTagsOf(r.id).some((t) => t.toLowerCase().includes(needle))
-    })
+    rows = rows.filter((r) => r.name.toLowerCase().includes(needle))
   }
 
   /* ---------- 4. 组装返回 ---------- */

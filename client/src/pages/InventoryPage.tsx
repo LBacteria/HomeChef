@@ -162,6 +162,15 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null)
 
+  /**
+   * 库存搜索词（本次新增）。
+   *
+   * ⚠️ 纯**前端本地过滤** —— 后端 `/api/ingredients` 没有 search 参数，
+   *    且库存页已经加载了全部库存记录与食材定义（用于显示名称），
+   *    因此无需新增后端接口。
+   */
+  const [search, setSearch] = useState('')
+
   /** 定义 ID → 定义 的映射（用于显示名称与可用单位） */
   const definitionMap = useMemo(() => {
     const map = new Map<number, IngredientDefinitionDetail>()
@@ -214,7 +223,28 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
     setDialog({ kind: 'none' })
   }
 
-  const groups = useMemo(() => groupByDefinition(records), [records])
+  /**
+   * 搜索过滤后的库存记录（本次新增）。
+   *
+   * 规则：
+   *   - 只在**库存记录**上过滤（`records` 来自 `GET /api/ingredients`），
+   *     因此结果必然是"当前确实有库存的食材"，
+   *     **不会**把食材库里没有任何库存记录的定义带进列表。
+   *   - 匹配对象是该记录所属食材定义的**名称**（definitionMap 已在本地）。
+   *   - 首尾空白 trim；空搜索词 = 不过滤；匹配不区分大小写。
+   *   - 与分类筛选、排序**并行兼容**：后两者由后端执行，
+   *     这里只是在其结果之上再按名称过滤。
+   */
+  const visibleRecords = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    if (needle.length === 0) return records
+    return records.filter((r) => {
+      const def = definitionMap.get(r.definition_id)
+      return (def?.name ?? '').toLowerCase().includes(needle)
+    })
+  }, [records, definitionMap, search])
+
+  const groups = useMemo(() => groupByDefinition(visibleRecords), [visibleRecords])
 
   async function handleCreate(value: InventoryFormValue) {
     // ⚠️ 调味品：quantity / unit 为 null → 不发送，由后端用哨兵值填充
@@ -312,6 +342,22 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
         />
 
         <div className="with-category-filter-main">
+          {/*
+            搜索栏（本次新增）：
+            ⚠️ 沿用库存页既有控件风格 —— 与 SortControls 同处一个工具条，
+               使用项目统一的 `.search-input` 样式与 `.inventory-search-input`
+               覆盖其独立使用时的宽度/下边距。
+          */}
+          <input
+            type="search"
+            className="search-input inventory-search-input"
+            placeholder="搜索库存食材"
+            value={search}
+            disabled={loading}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="搜索库存食材"
+          />
+
           {/* 排序：只选择方式，实际排序由后端执行 */}
           <SortControls
             field={sortField}
@@ -336,17 +382,29 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
 
       {!loading && !loadError && groups.length === 0 && (
         <div className="empty-state">
-          <p>目前没有库存。</p>
-          {definitions.length === 0 ? (
-            <p className="hint">请先到「食材库」添加食材。</p>
+          {records.length > 0 && search.trim().length > 0 ? (
+            /* 有库存，但搜索没有命中 —— 给出明确提示，避免误认为库存丢失 */
+            <>
+              <p>没有匹配「{search.trim()}」的库存食材。</p>
+              <button type="button" onClick={() => setSearch('')}>
+                清空搜索
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              className="primary"
-              onClick={() => setDialog({ kind: 'create' })}
-            >
-              添加第一条库存
-            </button>
+            <>
+              <p>目前没有库存。</p>
+              {definitions.length === 0 ? (
+                <p className="hint">请先到「食材库」添加食材。</p>
+              ) : (
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => setDialog({ kind: 'create' })}
+                >
+                  添加第一条库存
+                </button>
+              )}
+            </>
           )}
         </div>
       )}

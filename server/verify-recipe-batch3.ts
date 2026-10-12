@@ -194,15 +194,28 @@ if (!(await waitFor())) {
     JSON.stringify(listNames(s1.body).sort()) === JSON.stringify(['番茄炒蛋', '番茄蛋汤'].sort()),
     JSON.stringify(listNames(s1.body)))
 
+  // ⚠️ v0.2.0 产品决策变更：搜索**只匹配菜谱名称**，Tag 名称不再参与搜索。
+  //    下面用「确实带该 Tag 的菜谱」做**反证**：
+  //    不是数据不存在，而是搜索不匹配 Tag；同时证明 Tag 筛选功能未受影响。
   const s2 = await j('GET', '/api/recipes?search=快手')
-  ok('★ 按 Tag 名称搜索「快手」→ 2 条', s2.body.length === 2, `${s2.body?.length}`)
-  ok('  命中带「快手」Tag 的菜谱',
-    JSON.stringify(listNames(s2.body).sort()) === JSON.stringify(['凉拌黄瓜', '番茄炒蛋'].sort()),
-    JSON.stringify(listNames(s2.body)))
+  ok('★★ Tag 名称不参与搜索（「快手」是 Tag 名 → 0 条）',
+    s2.status === 200 && s2.body.length === 0, `${s2.status}/${s2.body?.length}`)
+
+  const s2b = await j('GET', '/api/recipes?tags=' + encodeURIComponent('快手'))
+  ok('  反证：Tag 筛选「快手」仍命中 2 条（Tag 数据存在，筛选未受影响）',
+    s2b.body.length === 2, `${s2b.body?.length}`)
+  ok('  反证命中：凉拌黄瓜与番茄炒蛋',
+    JSON.stringify(listNames(s2b.body).sort()) === JSON.stringify(['凉拌黄瓜', '番茄炒蛋'].sort()),
+    JSON.stringify(listNames(s2b.body)))
 
   const s3 = await j('GET', '/api/recipes?search=汤品')
-  ok('按 Tag 名称搜索「汤品」→ 1 条', s3.body.length === 1, `${s3.body?.length}`)
-  ok('  命中番茄蛋汤', s3.body[0]?.name === '番茄蛋汤', `${s3.body[0]?.name}`)
+  ok('★★ Tag 名称不参与搜索（「汤品」是 Tag 名 → 0 条）',
+    s3.status === 200 && s3.body.length === 0, `${s3.status}/${s3.body?.length}`)
+
+  const s3b = await j('GET', '/api/recipes?tags=' + encodeURIComponent('汤品'))
+  ok('  反证：Tag 筛选「汤品」仍命中 1 条',
+    s3b.body.length === 1 && s3b.body[0]?.name === '番茄蛋汤',
+    `${s3b.body?.length}/${s3b.body[0]?.name}`)
 
   const s4 = await j('GET', '/api/recipes?search=不存在的菜')
   ok('无匹配 → 空数组', s4.status === 200 && Array.isArray(s4.body) && s4.body.length === 0,
@@ -224,7 +237,13 @@ if (!(await waitFor())) {
   ok('★★ 搜索大小写不敏感（abc 命中 ABC）', s8.body.length === 1, `${s8.body?.length}`)
   ok('  命中 ABC 沙拉', s8.body[0]?.name === 'ABC 沙拉', `${s8.body[0]?.name}`)
   const s9 = await j('GET', '/api/recipes?search=salad')
-  ok('★★ Tag 名称搜索也大小写不敏感（salad 命中 Salad）', s9.body.length === 1, `${s9.body?.length}`)
+  ok('★★ Tag 名称不参与搜索（「Salad」是 Tag 名 → 0 条）',
+    s9.status === 200 && s9.body.length === 0, `${s9.status}/${s9.body?.length}`)
+
+  const s9b = await j('GET', '/api/recipes?tags=' + encodeURIComponent('Salad'))
+  ok('  反证：Tag 筛选「Salad」仍命中 1 条',
+    s9b.body.length === 1 && s9b.body[0]?.name === 'ABC 沙拉',
+    `${s9b.body?.length}/${s9b.body[0]?.name}`)
 
   // SQL 注入尝试（应被参数化/转义处理，不报错、不返回异常结果）
   const s10 = await j('GET', '/api/recipes?search=' + encodeURIComponent("' OR 1=1 --"))

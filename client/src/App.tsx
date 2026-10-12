@@ -2,16 +2,19 @@ import { useCallback, useState } from 'react'
 
 import DefinitionsPage from './pages/DefinitionsPage'
 import InventoryPage from './pages/InventoryPage'
+import RecipesPage from './pages/RecipesPage'
 import SettingsPage from './pages/SettingsPage'
 
 /**
  * 应用根组件。
  *
- * 三个视图，用 useState 切换（不引入 react-router）。
+ * 四个视图，用 useState 切换（不引入 react-router）。
+ * 导航顺序：库存 / 食材库 / 菜谱 / 设置。
+ *
  * 食材库发生变化时，通过 definitionsVersion 通知库存页刷新定义列表。
  */
 
-type View = 'inventory' | 'definitions' | 'settings'
+type View = 'inventory' | 'definitions' | 'recipes' | 'settings'
 
 export default function App() {
   const [view, setView] = useState<View>('inventory')
@@ -55,6 +58,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={view === 'recipes' ? 'nav-item active' : 'nav-item'}
+            onClick={() => setView('recipes')}
+          >
+            菜谱
+          </button>
+          <button
+            type="button"
             className={view === 'settings' ? 'nav-item active' : 'nav-item'}
             onClick={handleOpenSettings}
           >
@@ -72,6 +82,7 @@ export default function App() {
       {view === 'definitions' && (
         <DefinitionsPage onDefinitionsChanged={handleDefinitionsChanged} />
       )}
+      {view === 'recipes' && <RecipesPage />}
       {view === 'settings' && <SettingsPage />}
     </div>
   )
