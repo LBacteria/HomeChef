@@ -21,11 +21,21 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import Database from 'better-sqlite3'
+
+import {
+  startServer, waitForReady, ServerStartupError, resolveTsxHooks,
+} from './harness/server-lifecycle.js'
 
 const PORT = 54000 + Math.floor(Math.random() * 2000)
 const BASE = `http://127.0.0.1:${PORT}`
-const dbPath = resolve(process.cwd(), 'data', `v013-u1-${Date.now()}.db`)
+// 临时库根目录：默认 server/data/（行为与改造前一致）；
+// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
+const dataRoot = resolve(
+  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
+)
+const dbPath = resolve(dataRoot, `v013-u1-${Date.now()}.db`)
 
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
 
@@ -63,25 +73,107 @@ async function req(method: string, path: string, body?: unknown): Promise<Res> {
   return { status: res.status, body: parsed }
 }
 
-const proc: ChildProcess = spawn('npx', ['tsx', 'src/server.ts'], {
+/*
+ * ⚠️ 直接启动 Node（**不经 npx、不经 shell**）：
+ *    原写法 `spawn('npx', [...], { shell: true })` 会插入 cmd.exe 外壳，
+ *    `proc.kill()` 只能终止外壳，npx/tsx/node 三代子进程会逃逸成孤儿。
+ *    现在 `proc.pid` 就是真实服务进程，停止即刻生效。
+ *    详见 harness/server-lifecycle.ts。
+ */
+const server = startServer({
   cwd: process.cwd(),
-  env: { ...process.env, PORT: String(PORT), HOME_CHEF_DB_PATH: dbPath },
-  stdio: 'ignore', shell: true,
+  port: PORT,
+  dbPath,
+  // 保留输出（有上限），启动失败时能打印 stderr 而不是完全不可见
+  stdio: 'pipe',
 })
 
-async function waitFor(url: string, tries = 60) {
-  for (let i = 0; i < tries; i++) {
-    try { const r = await fetch(url); if (r.ok || r.status === 404) return true } catch { /* */ }
-    await new Promise((r) => setTimeout(r, 300))
-  }
-  return false
-}
+// 预检端口必须空闲：否则会连到旧实例的旧数据库并产生误判
+try { await fetch(`${BASE}/health`); console.log(`[FAIL] 端口 ${PORT} 已占用`); await server.stop(); process.exit(1) } catch { /* 未占用，继续 */ }
 
-try { await fetch(`${BASE}/health`); console.log(`[FAIL] 端口 ${PORT} 已占用`); process.exit(1) } catch { /* */ }
-if (!(await waitFor(`${BASE}/health`))) {
-  console.log('[FAIL] 服务未就绪'); proc.kill(); process.exit(1)
+// 绝对超时：服务**提前退出**或超过 30s 未就绪都会抛错，绝不无限等待
+try {
+  await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle: server })
+} catch (e) {
+  console.log('[FAIL] 服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+  if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+  await server.stop()
+  process.exit(1)
 }
 console.log(`server ${BASE}\n`)
+
+/* ============================================================
+ * Seed 子进程（本地 helper，**不修改共享 harness**）
+ *
+ * ⚠️ 原写法 `spawn('npx', ['tsx', 'seed/seed.ts'], { shell: true })` 的问题：
+ *    ① 进程链为 `cmd.exe → npx → tsx → node` 四层，父进程**拿不到真实退出码**；
+ *    ② 只监听 `close`，seed 失败被静默忽略 → 后续验证对着空库跑出**误报**；
+ *    ③ 无超时，seed 挂起则整个脚本永久挂起；
+ *    ④ `finally` 只杀服务，seed 链可能逃逸成孤儿。
+ *
+ * 现在：进程树只有 1 层（tsx loader 在**同一进程**内运行，不派生子进程），
+ *       显式检查 `code` 与 `signalCode`，带 60s 超时，失败即中止后续验证。
+ * ============================================================ */
+const SEED_TIMEOUT_MS = 60_000
+
+/** 当前存活的 seed 子进程（供 finally 兜底清理） */
+let seedChild: ChildProcess | null = null
+
+/** 终止 seed 并**等待其真正退出**（不凭父进程结束推断） */
+async function killSeed(): Promise<void> {
+  const child = seedChild
+  if (child === null) return
+  if (child.exitCode === null && child.signalCode === null) {
+    try { child.kill('SIGKILL') } catch { /* 可能已退出 */ }
+    await new Promise<void>((res) => {
+      if (child.exitCode !== null || child.signalCode !== null) return res()
+      const t = setTimeout(res, 5_000)
+      child.once('exit', () => { clearTimeout(t); res() })
+    })
+  }
+  seedChild = null
+}
+
+/** 运行 seed：成功返回；失败 / 超时 / 启动错误均抛错（抛出时 seed 已确认退出） */
+async function runSeed(): Promise<void> {
+  const { preflight, loader } = resolveTsxHooks()
+  const child = spawn(
+    process.execPath,
+    ['--require', preflight, '--import', pathToFileURL(loader).href, 'seed/seed.ts'],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME_CHEF_DB_PATH: dbPath },
+      // 保留原有语义：seed 输出不参与本脚本的断言
+      stdio: 'ignore',
+      windowsHide: true,
+    },
+  )
+  seedChild = child
+
+  const outcome = await new Promise<
+    | { kind: 'exit'; code: number | null; signal: NodeJS.Signals | null }
+    | { kind: 'timeout' }
+    | { kind: 'error'; err: Error }
+  >((res) => {
+    const timer = setTimeout(() => res({ kind: 'timeout' }), SEED_TIMEOUT_MS)
+    child.on('error', (err: Error) => { clearTimeout(timer); res({ kind: 'error', err }) })
+    child.on('exit', (code, signal) => { clearTimeout(timer); res({ kind: 'exit', code, signal }) })
+  })
+
+  if (outcome.kind === 'error') {
+    await killSeed()
+    throw new Error(`seed 启动失败：${outcome.err.message}`)
+  }
+  if (outcome.kind === 'timeout') {
+    await killSeed()
+    throw new Error(`seed 超时（${SEED_TIMEOUT_MS}ms）未结束，已强制终止`)
+  }
+  if (outcome.code !== 0 || outcome.signal !== null) {
+    await killSeed()
+    throw new Error(`seed 非正常退出：code=${outcome.code} signal=${String(outcome.signal)}`)
+  }
+  seedChild = null
+}
 
 function shift(days: number): string {
   const d = new Date()
@@ -99,13 +191,16 @@ try {
    * 准备
    * ============================================================ */
   console.log('===== 准备 =====')
-  await new Promise<void>((res) => {
-    const p = spawn('npx', ['tsx', 'seed/seed.ts'], {
-      cwd: process.cwd(), env: { ...process.env, HOME_CHEF_DB_PATH: dbPath },
-      shell: true, stdio: 'ignore',
-    })
-    p.on('close', () => res())
-  })
+  try {
+    await runSeed()
+  } catch (e) {
+    console.log(`[FAIL] seed 未成功完成：${e instanceof Error ? e.message : String(e)}`)
+    console.log('[ABORT] 因 seed 未能正常完成，后续验证已中止（避免产生误报）')
+    await killSeed()
+    await server.stop()
+    raw.close()
+    process.exit(1)
+  }
 
   const cats = (await req('GET', '/api/categories')).body
   const SEASONING = cats.find((c: any) => c.name === '调味品').id
@@ -350,9 +445,11 @@ try {
   `).get() as any).c
   ok('所有调味品库存均符合 sentinel（quantity=0 且 expiry NULL）', seasonSentinel === 0, `${seasonSentinel}`)
 } finally {
-  proc.kill()
+  // 兜底：父脚本异常时 seed 可能仍存活，先确认其退出
+  await killSeed()
+  // 幂等停止：任何成功 / 失败 / 异常路径都会走到这里，进程已退出时重复调用也安全
+  await server.stop()
   raw.close()
-  await new Promise((r) => setTimeout(r, 800))
 }
 
 console.log(`\n===== U1 结果：PASS=${pass} FAIL=${fail} =====`)
