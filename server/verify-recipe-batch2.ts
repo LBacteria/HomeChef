@@ -15,16 +15,23 @@
  * ⚠️ 使用独立临时数据库 + 动态端口，不触碰 homechef.db。
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Database from 'better-sqlite3'
+
+import { startServer, waitForReady, ServerStartupError } from './harness/server-lifecycle.js'
 
 // ⚠️ 端口必须 < 65536。65000 + [0, 500) 最坏 65499，安全。
 //    （曾误写成 65000 + [0, 4000)，最大 68999 会触发 ERR_SOCKET_BAD_PORT）
 const PORT = 65000 + Math.floor(Math.random() * 500)
 const BASE = `http://127.0.0.1:${PORT}`
-const dbPath = resolve(process.cwd(), 'data', `recipe-b2-${Date.now()}.db`)
+// 临时库根目录：默认 server/data/（行为与改造前一致）；
+// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
+const dataRoot = resolve(
+  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
+)
+const dbPath = resolve(dataRoot, `recipe-b2-${Date.now()}.db`)
 
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
 
@@ -84,33 +91,37 @@ async function req(method: string, path: string, body?: unknown): Promise<Res> {
   return { status: res.status, body: parsed }
 }
 
-const proc: ChildProcess = spawn('npx', ['tsx', 'src/server.ts'], {
+/*
+ * ⚠️ 直接启动 Node（**不经 npx、不经 shell**）：
+ *    原写法 `spawn('npx', [...], { shell: true })` 会插入 cmd.exe 外壳，
+ *    `proc.kill()` 只能终止外壳，npx/tsx/node 三代子进程会逃逸成孤儿。
+ *    现在 `proc.pid` 就是真实服务进程，停止即刻生效。
+ *    详见 harness/server-lifecycle.ts。
+ */
+const server = startServer({
   cwd: process.cwd(),
-  env: { ...process.env, PORT: String(PORT), HOME_CHEF_DB_PATH: dbPath },
-  // 保留输出以便启动失败时诊断（而不是 stdio: 'ignore' 什么都看不到）
-  stdio: ['ignore', 'pipe', 'pipe'],
-  shell: true,
+  port: PORT,
+  dbPath,
+  // 保留输出以便启动失败时诊断（有上限，不会无限增长）
+  stdio: 'pipe',
 })
-let serverLog = ''
-proc.stdout?.on('data', (d) => { serverLog += String(d) })
-proc.stderr?.on('data', (d) => { serverLog += String(d) })
 
-async function waitFor(url: string, tries = 100) {
-  for (let i = 0; i < tries; i++) {
-    if (proc.exitCode !== null) return false // 进程已退出，不必再等
-    try { const r = await fetch(url); if (r.ok || r.status === 404) return true } catch { /* */ }
-    await new Promise((r) => setTimeout(r, 300))
-  }
-  return false
+// 绝对超时：服务**提前退出**或超过 30s 未就绪都会抛错，绝不无限等待
+let ready = false
+try {
+  await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle: server })
+  ready = true
+} catch (e) {
+  console.log('  [FAIL] 服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+  console.log(`  端口=${PORT} 进程退出码=${server.proc.exitCode}`)
+  if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+  console.log('  --- 服务输出（最后 2000 字符）---')
+  console.log('  ' + (server.stderr() + server.output()).slice(-2000).replace(/\n/g, '\n  '))
+  fail++
 }
 
-if (!(await waitFor(`${BASE}/health`))) {
-  console.log('  [FAIL] 服务未就绪')
-  console.log(`  端口=${PORT} 进程退出码=${proc.exitCode}`)
-  console.log('  --- 服务输出（最后 2000 字符）---')
-  console.log('  ' + serverLog.slice(-2000).replace(/\n/g, '\n  '))
-  fail++
-} else {
+try {
+if (ready) {
   info('服务地址', BASE)
   const [d1, d2, d3] = defs
   info('测试用食材', defs.map((d) => `${d.id}:${d.name}`).join(', '))
@@ -512,10 +523,12 @@ info('integrity_check', integrity)
 info('foreign_key_check 违规数', String(fkViolations.length))
 ok('integrity_check = ok', integrity === 'ok')
 ok('外键无违规', fkViolations.length === 0)
+} finally {
+  // 幂等停止：任何成功 / 失败 / 异常路径都会走到这里，进程已退出时重复调用也安全
+  await server.stop()
+}
 
-proc.kill()
 raw.close()
-await new Promise((r) => setTimeout(r, 500))
 
 console.log(`\n===== 批次 2 结果：PASS=${pass} FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

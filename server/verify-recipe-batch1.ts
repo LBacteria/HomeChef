@@ -15,14 +15,21 @@
  * ⚠️ 使用独立临时数据库 + 动态端口，不触碰 homechef.db。
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Database from 'better-sqlite3'
 
+import { startServer, waitForReady, ServerStartupError } from './harness/server-lifecycle.js'
+
 const PORT = 63000 + Math.floor(Math.random() * 2000)
 const BASE = `http://127.0.0.1:${PORT}`
-const dbPath = resolve(process.cwd(), 'data', `recipe-b1-${Date.now()}.db`)
+// 临时库根目录：默认 server/data/（行为与改造前一致）；
+// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
+const dataRoot = resolve(
+  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
+)
+const dbPath = resolve(dataRoot, `recipe-b1-${Date.now()}.db`)
 
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
 
@@ -85,20 +92,20 @@ async function req(method: string, path: string, body?: unknown): Promise<Res> {
   return { status: res.status, body: parsed }
 }
 
-const proc: ChildProcess = spawn('npx', ['tsx', 'src/server.ts'], {
+/*
+ * ⚠️ 直接启动 Node（**不经 npx、不经 shell**）：
+ *    原写法 `spawn('npx', [...], { shell: true })` 会插入 cmd.exe 外壳，
+ *    `proc.kill()` 只能终止外壳，npx/tsx/node 三代子进程会逃逸成孤儿。
+ *    现在 `proc.pid` 就是真实服务进程，停止即刻生效。
+ *    详见 harness/server-lifecycle.ts。
+ */
+const server = startServer({
   cwd: process.cwd(),
-  env: { ...process.env, PORT: String(PORT), HOME_CHEF_DB_PATH: dbPath },
-  stdio: 'ignore',
-  shell: true,
+  port: PORT,
+  dbPath,
+  // 保留输出（有上限），启动失败时能打印 stderr 而不是完全不可见
+  stdio: 'pipe',
 })
-
-async function waitFor(url: string, tries = 60) {
-  for (let i = 0; i < tries; i++) {
-    try { const r = await fetch(url); if (r.ok || r.status === 404) return true } catch { /* */ }
-    await new Promise((r) => setTimeout(r, 300))
-  }
-  return false
-}
 
 /* ============================================================
  * 一、Migration 与表结构（直接查临时库）
@@ -250,9 +257,19 @@ try {
   console.log(`  [FAIL] 端口 ${PORT} 已占用`); fail++
 } catch { /* 未占用，继续 */ }
 
-if (!(await waitFor(`${BASE}/health`))) {
-  console.log('  [FAIL] 服务未就绪'); fail++
-} else {
+// 绝对超时：服务**提前退出**或超过 30s 未就绪都会抛错，绝不无限等待
+let ready = false
+try {
+  await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle: server })
+  ready = true
+} catch (e) {
+  console.log('  [FAIL] 服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+  if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+  fail++
+}
+
+try {
+if (ready) {
   info('服务地址', BASE)
 
   /* ============================================================
@@ -491,10 +508,12 @@ info('integrity_check', integrity)
 info('foreign_key_check 违规数', String(fkCheck.length))
 ok('integrity_check = ok', integrity === 'ok')
 ok('外键无违规', fkCheck.length === 0)
+} finally {
+  // 幂等停止：任何成功 / 失败 / 异常路径都会走到这里，进程已退出时重复调用也安全
+  await server.stop()
+}
 
-proc.kill()
 raw.close()
-await new Promise((r) => setTimeout(r, 500))
 
 console.log(`\n===== 批次 1 结果：PASS=${pass} FAIL=${fail} =====`)
 process.exit(fail === 0 ? 0 : 1)

@@ -17,14 +17,21 @@
  * ⚠️ 独立临时数据库 + 动态端口，不触碰 homechef.db。
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Database from 'better-sqlite3'
 
+import { startServer, waitForReady, ServerStartupError, type ServerHandle } from './harness/server-lifecycle.js'
+
 const PORT = 64800 + Math.floor(Math.random() * 200)
 const BASE = `http://127.0.0.1:${PORT}`
-const dbPath = resolve(process.cwd(), 'data', `recipe-tx-${Date.now()}.db`)
+// 临时库根目录：默认 server/data/（行为与改造前一致）；
+// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
+const dataRoot = resolve(
+  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
+)
+const dbPath = resolve(dataRoot, `recipe-tx-${Date.now()}.db`)
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
 
 const drizzleDir = resolve(process.cwd(), 'drizzle')
@@ -62,30 +69,40 @@ ok('seed 完成，食材定义可用', defs.length >= 3, `${defs.length}`)
 const [d1, d2, d3] = defs
 
 /* ---------- 启动服务：带故障注入环境变量 ---------- */
+/*
+ * ⚠️ 直接启动 Node（**不经 npx、不经 shell**）：原写法 `shell: true` 会插入
+ *    cmd.exe 外壳，`proc.kill()` 只能终止外壳，三代子进程逃逸成孤儿。
+ *    现在 `proc.pid` 就是真实服务进程。详见 harness/server-lifecycle.ts。
+ */
 const FAULT = 'recipe_full_save_after_links'
-const proc: ChildProcess = spawn('npx', ['tsx', 'src/server.ts'], {
-  cwd: process.cwd(),
-  env: {
-    ...process.env,
-    PORT: String(PORT),
-    HOME_CHEF_DB_PATH: dbPath,
-    HOME_CHEF_FAULT_INJECT: FAULT,   // ← 关键：启用故障注入
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-  shell: true,
-})
-let serverLog = ''
-proc.stdout?.on('data', (d) => { serverLog += String(d) })
-proc.stderr?.on('data', (d) => { serverLog += String(d) })
 
-async function waitFor() {
-  for (let i = 0; i < 100; i++) {
-    if (proc.exitCode !== null) return false
-    try { const r = await fetch(`${BASE}/health`); if (r.ok) return true } catch { /* */ }
-    await new Promise((r) => setTimeout(r, 300))
+/** 后续阶段会重启服务；提升到顶层声明，便于文件末尾统一幂等清理 */
+let server2: ServerHandle | null = null
+let server3: ServerHandle | null = null
+
+/*
+ * ⚠️ harness 的 startServer() 统一注入 PORT / HOME_CHEF_DB_PATH，
+ *    但**不提供**按次追加环境变量的入口（本批次约定不改公共模块）。
+ *    这里用「临时设置 process.env → 启动 → 立即删除」的等价方式注入
+ *    故障注入变量；harness 内部 `{ ...process.env }` 会带上它。
+ */
+function startServerWithEnv(extraEnv: Record<string, string>): ServerHandle {
+  const saved: Record<string, string | undefined> = {}
+  for (const [k, v] of Object.entries(extraEnv)) {
+    saved[k] = process.env[k]
+    process.env[k] = v
   }
-  return false
+  try {
+    return startServer({ cwd: process.cwd(), port: PORT, dbPath, stdio: 'pipe' })
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+  }
 }
+
+const server1 = startServerWithEnv({ HOME_CHEF_FAULT_INJECT: FAULT })
 
 const j = async (method: string, path: string, body?: unknown) => {
   const r = await fetch(`${BASE}${path}`, {
@@ -98,11 +115,19 @@ const j = async (method: string, path: string, body?: unknown) => {
   return { status: r.status, body: b }
 }
 
-if (!(await waitFor())) {
-  console.log('  [FAIL] 服务未就绪')
-  console.log('  ' + serverLog.slice(-1500))
+// 绝对超时：服务**提前退出**或超过 30s 未就绪都会抛错，绝不无限等待
+let ready1 = false
+try {
+  await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle: server1 })
+  ready1 = true
+} catch (e) {
+  console.log('  [FAIL] 服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+  if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+  console.log('  ' + (server1.stderr() + server1.output()).slice(-1500))
   fail++
-} else {
+}
+
+if (ready1) {
   info('服务地址', BASE)
   info('故障注入点', FAULT)
 
@@ -155,36 +180,24 @@ if (!(await waitFor())) {
    * ============================================================ */
   section('2. 关闭故障注入，建立基线')
 
-  proc.kill()
-  await new Promise((r) => setTimeout(r, 800))
+  // 幂等停止（harness 会等待进程真正退出，无需再手动 sleep）
+  await server1.stop()
 
-  const proc2: ChildProcess = spawn('npx', ['tsx', 'src/server.ts'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(PORT),
-      HOME_CHEF_DB_PATH: dbPath,
-      // ⚠️ 不设置 HOME_CHEF_FAULT_INJECT → 故障注入完全不生效
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
-  })
-  let log2 = ''
-  proc2.stdout?.on('data', (d) => { log2 += String(d) })
-  proc2.stderr?.on('data', (d) => { log2 += String(d) })
+  // ⚠️ 不设置 HOME_CHEF_FAULT_INJECT → 故障注入完全不生效
+  server2 = startServerWithEnv({})
 
-  async function waitFor2() {
-    for (let i = 0; i < 100; i++) {
-      if (proc2.exitCode !== null) return false
-      try { const r = await fetch(`${BASE}/health`); if (r.ok) return true } catch { /* */ }
-      await new Promise((r) => setTimeout(r, 300))
-    }
-    return false
+  let ready2 = false
+  try {
+    await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle: server2 })
+    ready2 = true
+  } catch (e) {
+    console.log('  [FAIL] 重启后服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+    if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+    console.log('  ' + (server2.stderr() + server2.output()).slice(-1200))
+    fail++
   }
 
-  if (!(await waitFor2())) {
-    console.log('  [FAIL] 重启后服务未就绪'); console.log('  ' + log2.slice(-1200)); fail++
-  } else {
+  if (ready2) {
     ok('无故障注入时服务正常启动', true)
 
     const base = await j('POST', '/api/recipes', {
@@ -225,36 +238,23 @@ if (!(await waitFor())) {
      * ============================================================ */
     section('3. ★ 事务中途失败 → 整体回滚')
 
-    proc2.kill()
-    await new Promise((r) => setTimeout(r, 800))
+    await server2!.stop()
 
-    const proc3: ChildProcess = spawn('npx', ['tsx', 'src/server.ts'], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        PORT: String(PORT),
-        HOME_CHEF_DB_PATH: dbPath,
-        HOME_CHEF_FAULT_INJECT: FAULT,   // ← 重新启用
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
-    })
-    let log3 = ''
-    proc3.stdout?.on('data', (d) => { log3 += String(d) })
-    proc3.stderr?.on('data', (d) => { log3 += String(d) })
+    // ← 重新启用故障注入
+    server3 = startServerWithEnv({ HOME_CHEF_FAULT_INJECT: FAULT })
 
-    async function waitFor3() {
-      for (let i = 0; i < 100; i++) {
-        if (proc3.exitCode !== null) return false
-        try { const r = await fetch(`${BASE}/health`); if (r.ok) return true } catch { /* */ }
-        await new Promise((r) => setTimeout(r, 300))
-      }
-      return false
+    let ready3 = false
+    try {
+      await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle: server3 })
+      ready3 = true
+    } catch (e) {
+      console.log('  [FAIL] 启用注入后服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+      if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+      console.log('  ' + (server3.stderr() + server3.output()).slice(-1200))
+      fail++
     }
 
-    if (!(await waitFor3())) {
-      console.log('  [FAIL] 启用注入后服务未就绪'); console.log('  ' + log3.slice(-1200)); fail++
-    } else {
+    if (ready3) {
       // 这次统一保存会：改名称/备注 → 删旧食材 → 插新食材 → 删旧Tag → 新建Tag → 抛错
       const attempt = await j('PATCH', `/api/recipes/${rid}/full`, {
         name: '★本应被回滚的名称',
@@ -322,14 +322,21 @@ if (!(await waitFor())) {
         detailAfter.body.ingredients.length === 2,
         `${detailAfter.body?.name} / ${detailAfter.body?.ingredients?.length}`)
 
-      proc3.kill()
+      // 不在此处 kill：交给文件末尾的统一幂等清理
     }
   }
 }
 
-await new Promise((r) => setTimeout(r, 500))
+/* ---------- 统一幂等清理 ----------
+ * 无论走到哪个分支（就绪失败 / 提前返回 / 正常结束），都确保三个服务已停止。
+ * stop() 幂等；harness 另有 process 退出兜底。
+ */
+await server3?.stop()
+await server2?.stop()
+await server1.stop()
+
 raw.close()
-// ⚠️ 进程刚结束，文件可能仍被短暂占用 → 容错删除，不影响测试结论
+// ⚠️ 容错删除，不影响测试结论
 for (const s of ['', '-shm', '-wal']) {
   try { rmSync(`${dbPath}${s}`, { force: true }) } catch { /* 交给系统回收 */ }
 }

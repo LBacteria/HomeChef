@@ -13,14 +13,21 @@
  * ⚠️ 独立临时数据库 + 动态端口，不触碰 homechef.db。
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Database from 'better-sqlite3'
 
+import { startServer, waitForReady, ServerStartupError } from './harness/server-lifecycle.js'
+
 const PORT = 65200 + Math.floor(Math.random() * 300)
 const BASE = `http://127.0.0.1:${PORT}`
-const dbPath = resolve(process.cwd(), 'data', `recipe-b3-${Date.now()}.db`)
+// 临时库根目录：默认 server/data/（行为与改造前一致）；
+// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
+const dataRoot = resolve(
+  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
+)
+const dbPath = resolve(dataRoot, `recipe-b3-${Date.now()}.db`)
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
 
 const drizzleDir = resolve(process.cwd(), 'drizzle')
@@ -79,7 +86,7 @@ ok('既有列未被破坏',
 /* ---------- 兼容性：模拟"旧库已有 app_settings 行"后升级 ---------- */
 // 上面是空库全量执行。这里再验证：先只跑到 0007，插一行旧数据，再跑 0008。
 {
-  const legacyPath = resolve(process.cwd(), 'data', `legacy-${Date.now()}.db`)
+  const legacyPath = resolve(dataRoot, `legacy-${Date.now()}.db`)
   for (const s of ['', '-shm', '-wal']) rmSync(`${legacyPath}${s}`, { force: true })
   const legacy = new Database(legacyPath)
   legacy.pragma('foreign_keys = ON')
@@ -129,23 +136,20 @@ ok('seed 完成', defs.length >= 3, `${defs.length}`)
 const [d1, d2, d3] = defs
 
 /* ---------- 启动服务 ---------- */
-const proc: ChildProcess = spawn('npx', ['tsx', 'src/server.ts'], {
+/*
+ * ⚠️ 直接启动 Node（**不经 npx、不经 shell**）：
+ *    原写法 `spawn('npx', [...], { shell: true })` 会插入 cmd.exe 外壳，
+ *    `proc.kill()` 只能终止外壳，npx/tsx/node 三代子进程会逃逸成孤儿。
+ *    现在 `proc.pid` 就是真实服务进程，停止即刻生效。
+ *    详见 harness/server-lifecycle.ts。
+ */
+const server = startServer({
   cwd: process.cwd(),
-  env: { ...process.env, PORT: String(PORT), HOME_CHEF_DB_PATH: dbPath },
-  stdio: ['ignore', 'pipe', 'pipe'], shell: true,
+  port: PORT,
+  dbPath,
+  // 保留输出以便启动失败时诊断（有上限，不会无限增长）
+  stdio: 'pipe',
 })
-let serverLog = ''
-proc.stdout?.on('data', (d) => { serverLog += String(d) })
-proc.stderr?.on('data', (d) => { serverLog += String(d) })
-
-async function waitFor() {
-  for (let i = 0; i < 100; i++) {
-    if (proc.exitCode !== null) return false
-    try { const r = await fetch(`${BASE}/health`); if (r.ok) return true } catch { /* */ }
-    await new Promise((r) => setTimeout(r, 300))
-  }
-  return false
-}
 const j = async (method: string, path: string, body?: unknown) => {
   const r = await fetch(`${BASE}${path}`, {
     method,
@@ -158,9 +162,20 @@ const j = async (method: string, path: string, body?: unknown) => {
 }
 const listNames = (arr: any[]) => arr.map((x) => x.name)
 
-if (!(await waitFor())) {
-  console.log('  [FAIL] 服务未就绪'); console.log('  ' + serverLog.slice(-1500)); fail++
-} else {
+// 绝对超时：服务**提前退出**或超过 30s 未就绪都会抛错，绝不无限等待
+let ready = false
+try {
+  await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle: server })
+  ready = true
+} catch (e) {
+  console.log('  [FAIL] 服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+  if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+  console.log('  ' + (server.stderr() + server.output()).slice(-1500))
+  fail++
+}
+
+try {
+if (ready) {
   info('服务地址', BASE)
 
   /* ============================================================
@@ -539,10 +554,12 @@ const integrity = (raw.prepare('PRAGMA integrity_check').get() as any).integrity
 const fkViolations = raw.prepare('PRAGMA foreign_key_check').all()
 ok('integrity_check = ok', integrity === 'ok', integrity)
 ok('外键无违规', fkViolations.length === 0, `${fkViolations.length}`)
+} finally {
+  // 幂等停止：任何成功 / 失败 / 异常路径都会走到这里，进程已退出时重复调用也安全
+  await server.stop()
+}
 
-proc.kill()
 raw.close()
-await new Promise((r) => setTimeout(r, 600))
 for (const s of ['', '-shm', '-wal']) {
   try { rmSync(`${dbPath}${s}`, { force: true }) } catch { /* */ }
 }
