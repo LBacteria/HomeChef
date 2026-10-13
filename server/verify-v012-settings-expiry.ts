@@ -10,14 +10,20 @@
  * 使用独立临时库与动态端口，不触碰正式库。
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Database from 'better-sqlite3'
 
+import { startServer, waitForReady, ServerStartupError, type ServerHandle } from './harness/server-lifecycle.js'
+
 const PORT = 35000 + Math.floor(Math.random() * 2000)
 const BASE = `http://127.0.0.1:${PORT}`
-const dbPath = resolve(process.cwd(), 'data', `v012-settings-${Date.now()}.db`)
+// 临时库根目录：默认 server/data/（行为与改造前一致）；
+// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
+const dataRoot = resolve(
+  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
+)
+const dbPath = resolve(dataRoot, `v012-settings-${Date.now()}.db`)
 
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
 
@@ -57,28 +63,44 @@ async function req(method: string, path: string, body?: unknown): Promise<Res> {
   return { status: res.status, body: parsed }
 }
 
-function startServer(): ChildProcess {
-  return spawn('npx', ['tsx', 'src/server.ts'], {
+/*
+ * ⚠️ 直接启动 Node（**不经 npx、不经 shell**）：
+ *    原写法 `spawn('npx', [...], { shell: true })` 会插入 cmd.exe 外壳，
+ *    `proc.kill()` 只能终止外壳，npx/tsx/node 三代子进程会逃逸成孤儿。
+ *    现在 `handle.proc.pid` 就是真实服务进程，停止即刻生效。
+ *    详见 harness/server-lifecycle.ts。
+ *
+ * 本脚本需要**重启服务**（验证设置持久化），故封装为可重复调用的启动函数。
+ */
+async function startServerAndWait(): Promise<ServerHandle> {
+  const handle = startServer({
     cwd: process.cwd(),
-    env: { ...process.env, PORT: String(PORT), HOME_CHEF_DB_PATH: dbPath },
-    stdio: 'ignore',
-    shell: true,
+    port: PORT,
+    dbPath,
+    // 保留输出（有上限），启动失败时能打印 stderr 而不是完全不可见
+    stdio: 'pipe',
   })
-}
-
-async function waitFor(url: string, tries = 60) {
-  for (let i = 0; i < tries; i++) {
-    try { const r = await fetch(url); if (r.ok || r.status === 404) return true } catch { /* */ }
-    await new Promise((r) => setTimeout(r, 300))
+  // 绝对超时：服务**提前退出**或超过 30s 未就绪都会抛错，绝不无限等待
+  try {
+    await waitForReady({ url: `${BASE}/health`, timeoutMs: 30_000, handle })
+  } catch (e) {
+    // 就绪失败也必须停掉刚启动的进程，避免残留
+    await handle.stop()
+    throw e
   }
-  return false
+  return handle
 }
 
-try { await fetch(`${BASE}/health`); console.log(`[FAIL] 端口 ${PORT} 已占用`); process.exit(1) } catch { /* */ }
+// 预检端口必须空闲：否则会连到旧实例的旧数据库并产生误判
+try { await fetch(`${BASE}/health`); console.log(`[FAIL] 端口 ${PORT} 已占用`); process.exit(1) } catch { /* 未占用，继续 */ }
 
-let proc = startServer()
-if (!(await waitFor(`${BASE}/health`))) {
-  console.log('[FAIL] 服务未就绪'); proc.kill(); process.exit(1)
+let server: ServerHandle
+try {
+  server = await startServerAndWait()
+} catch (e) {
+  console.log('[FAIL] 服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+  if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+  process.exit(1)
 }
 console.log(`server ${BASE}\n`)
 
@@ -359,13 +381,17 @@ try {
     expiry_warning_mode: 'percentage', expiry_warning_threshold: 42, allow_expired_for_recipe: true,
   })
 
-  proc.kill()
-  await new Promise((r) => setTimeout(r, 1200))
+  // 幂等停止（harness 会等待进程真正退出，无需再手动 sleep）
+  await server.stop()
 
-  proc = startServer()
-  if (!(await waitFor(`${BASE}/health`))) {
-    console.log('[FAIL] 重启后服务未就绪')
-  } else {
+  try {
+    server = await startServerAndWait()
+  } catch (e) {
+    console.log('[FAIL] 重启后服务未就绪：' + (e instanceof Error ? e.message : String(e)))
+    if (e instanceof ServerStartupError && e.detail.length > 0) console.log(e.detail)
+  }
+
+  {
     const afterRestart = await req('GET', '/api/settings')
     ok('重启后 mode 仍为 percentage', afterRestart.body.expiry_warning_mode === 'percentage',
       `${afterRestart.body.expiry_warning_mode}`)
@@ -411,9 +437,9 @@ try {
   const patchDef = await req('PATCH', `/api/ingredients/${mergeA.body.id}`, { definition_id: T })
   ok('Phase 3.1 PATCH definition_id 仍工作', patchDef.status === 200)
 } finally {
-  proc.kill()
+  // 幂等停止：任何成功 / 失败 / 异常路径都会走到这里，进程已退出时重复调用也安全
+  await server.stop()
   raw.close()
-  await new Promise((r) => setTimeout(r, 800))
 }
 
 console.log(`\n===== 结果：PASS=${pass} FAIL=${fail} =====`)
