@@ -1,11 +1,16 @@
-import { asc, desc, eq, inArray } from 'drizzle-orm'
+import { asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { randomUUID } from 'node:crypto'
 
 import { db } from '../db/index.js'
 import {
   UNITS,
+  cookingSession,
+  cookingSessionDish,
+  cookingSessionDishSkip,
   ingredientDefinition,
   recipe,
   recipeIngredient,
+  recipeStep,
   recipeTag,
   recipeTagLink,
 } from '../db/schema.js'
@@ -17,6 +22,7 @@ import {
   validationError,
 } from './errors.js'
 import { isBlankName, normalizeName } from './normalize.js'
+import { roundQuantity } from './quantity.js'
 import { faultPoint } from './faultInjection.js'
 
 /**
@@ -59,6 +65,15 @@ export interface RecipeIngredientDetail {
   unit: string | null
   note: string | null
   sort_order: number
+  /** 稳定标识（v0.2.1）；历史行可能为 null，首次保存时补齐 */
+  line_key: string | null
+}
+
+/** 详情中的一条步骤 */
+export interface RecipeStepDetail {
+  id: number
+  step_no: number
+  content: string
 }
 
 /** 详情 */
@@ -66,10 +81,26 @@ export interface RecipeDetail {
   id: number
   name: string
   note: string | null
+  content_revision: number
   created_at: string
   updated_at: string
   tags: string[]
   ingredients: RecipeIngredientDetail[]
+  steps: RecipeStepDetail[]
+}
+
+/** 取某个菜谱的步骤（按 step_no 升序） */
+function loadStepsOf(recipeId: number): RecipeStepDetail[] {
+  return db
+    .select({
+      id: recipeStep.id,
+      step_no: recipeStep.step_no,
+      content: recipeStep.content,
+    })
+    .from(recipeStep)
+    .where(eq(recipeStep.recipe_id, recipeId))
+    .orderBy(asc(recipeStep.step_no), asc(recipeStep.id))
+    .all()
 }
 
 /** 取某个菜谱的 Tag 名称列表（按关联记录 id 排序，保证稳定） */
@@ -218,6 +249,7 @@ export function getRecipeById(id: number): RecipeDetail {
       unit: recipeIngredient.unit,
       note: recipeIngredient.note,
       sort_order: recipeIngredient.sort_order,
+      line_key: recipeIngredient.line_key,
     })
     .from(recipeIngredient)
     .innerJoin(
@@ -232,10 +264,12 @@ export function getRecipeById(id: number): RecipeDetail {
     id: found.id,
     name: found.name,
     note: found.note,
+    content_revision: found.content_revision,
     created_at: found.created_at,
     updated_at: found.updated_at,
     tags: loadTagsOf(id),
     ingredients,
+    steps: loadStepsOf(id),
   }
 }
 
@@ -275,6 +309,17 @@ export interface RecipeIngredientInput {
   quantity?: number | null
   unit?: string | null
   note?: string | null
+  /**
+   * 稳定标识（v0.2.1）。
+   *
+   * - 携带时必须是**当前菜谱已有**的 line_key，否则 400
+   * - `definition_id` 与 `unit` 均未变 → 沿用
+   * - 上述任一变化 → 服务端生成新值（忽略传入值）
+   * - 未携带（新增行） → 服务端生成新值
+   *
+   * ⚠️ 它**不参与内容比较**，是身份标识而非内容字段。
+   */
+  line_key?: string | null
 }
 
 /** 新建 / 统一保存的输入 */
@@ -284,6 +329,14 @@ export interface RecipeInput {
   ingredients: RecipeIngredientInput[]
   /** Tag 名称列表；不存在的会被**自动创建**，已存在的**复用** */
   tags?: string[]
+  /**
+   * 步骤内容列表（v0.2.1）。
+   *
+   * ⚠️ `step_no` 由**数组下标 + 1** 生成，调用方不传序号。
+   *    顺序变化即视为内容变化。
+   *    未提供（`undefined`）时视为空步骤列表。
+   */
+  steps?: string[]
 }
 
 /* ------------------------------------------------------------
@@ -381,7 +434,43 @@ function assertIngredients(raw: unknown): RecipeIngredientInput[] {
       note = trimmed.length === 0 ? null : trimmed
     }
 
-    return { definition_id: defId, quantity, unit, note }
+    // line_key：可空字符串。
+    // ⚠️ 这里只做**类型**校验；「是否属于当前菜谱」必须由
+    //    saveRecipeFull 在事务内对照现有行校验（不能只信客户端）。
+    let lineKey: string | null = null
+    if (it.line_key !== undefined && it.line_key !== null) {
+      if (typeof it.line_key !== 'string') {
+        throw validationError(`第 ${index + 1} 条食材的 line_key 必须是字符串或 null`)
+      }
+      const trimmed = it.line_key.trim()
+      lineKey = trimmed.length === 0 ? null : trimmed
+    }
+
+    return { definition_id: defId, quantity, unit, note, line_key: lineKey }
+  })
+}
+
+/**
+ * 校验步骤数组（可为空数组），返回规范化后的步骤内容列表。
+ *
+ * ⚠️ `step_no` 由数组下标生成，调用方不传序号。
+ * ⚠️ 与食材不同，菜谱**允许没有步骤**（`steps` 未提供 = 空列表）。
+ */
+function assertSteps(raw: unknown): string[] {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) {
+    throw validationError('steps 必须是字符串数组')
+  }
+
+  return raw.map((item, index) => {
+    if (typeof item !== 'string') {
+      throw validationError(`第 ${index + 1} 条步骤必须是字符串`)
+    }
+    const trimmed = item.trim()
+    if (trimmed.length === 0) {
+      throw validationError(`第 ${index + 1} 条步骤不能为空`)
+    }
+    return trimmed
   })
 }
 
@@ -458,6 +547,200 @@ function assertRecipeNameAvailable(nameNormalized: string, excludeId?: number): 
 }
 
 /* ------------------------------------------------------------
+ * v0.2.1：内容比较与稳定标识
+ * ------------------------------------------------------------ */
+
+/** 内容比较用的规范化食材行（**不含** id / line_key —— 它们是身份，不是内容） */
+interface NormalizedIngredient {
+  definition_id: number
+  quantity: number | null
+  unit: string | null
+  note: string | null
+}
+
+/**
+ * 把食材列表规范化为可比较的形式。
+ *
+ * ⚠️ 顺序敏感：数组顺序即 `sort_order`，不排序。
+ * ⚠️ `quantity` 经 `roundQuantity()` 归一 —— 否则 `1` 与 `1.0000000001`
+ *    会被误判为「内容变化」，导致无谓的版本递增与会话失效。
+ */
+function normalizeIngredientList(items: NormalizedIngredient[]): NormalizedIngredient[] {
+  return items.map((it) => ({
+    definition_id: it.definition_id,
+    quantity: it.quantity === null ? null : roundQuantity(it.quantity),
+    unit: it.unit,
+    note: it.note,
+  }))
+}
+
+/**
+ * 判断菜谱**实际内容**是否发生变化。
+ *
+ * 参与比较：名称、备注、食材（definition_id / quantity / unit / note / 顺序）、
+ *           步骤（内容 / 顺序）。
+ * 不参与比较：line_key、数据库行 id、Tag。
+ *
+ * ⚠️ **服务端自行比较**，绝不信任客户端传入的 changed / isDirty 标记。
+ */
+function isContentChanged(
+  id: number,
+  name: string,
+  note: string | null,
+  ingredients: RecipeIngredientInput[],
+  steps: string[],
+): boolean {
+  const existing = db.select().from(recipe).where(eq(recipe.id, id)).get()
+  /* istanbul ignore next —— 调用前已确认存在，此处仅为类型收窄 */
+  if (!existing) return true
+
+  if (existing.name !== name) return true
+  if ((existing.note ?? null) !== note) return true
+
+  const existingIngredients = db
+    .select({
+      definition_id: recipeIngredient.definition_id,
+      quantity: recipeIngredient.quantity,
+      unit: recipeIngredient.unit,
+      note: recipeIngredient.note,
+    })
+    .from(recipeIngredient)
+    .where(eq(recipeIngredient.recipe_id, id))
+    .orderBy(asc(recipeIngredient.sort_order), asc(recipeIngredient.id))
+    .all()
+
+  const before = normalizeIngredientList(existingIngredients)
+  const after = normalizeIngredientList(
+    ingredients.map((it) => ({
+      definition_id: it.definition_id,
+      quantity: it.quantity ?? null,
+      unit: it.unit ?? null,
+      note: it.note ?? null,
+    })),
+  )
+  if (JSON.stringify(before) !== JSON.stringify(after)) return true
+
+  const existingSteps = db
+    .select({ content: recipeStep.content })
+    .from(recipeStep)
+    .where(eq(recipeStep.recipe_id, id))
+    .orderBy(asc(recipeStep.step_no), asc(recipeStep.id))
+    .all()
+    .map((r) => r.content)
+
+  if (JSON.stringify(existingSteps) !== JSON.stringify(steps)) return true
+
+  return false
+}
+
+/** 生成新的稳定标识（不依赖名称 / 单位 / 行 id） */
+function newLineKey(): string {
+  return randomUUID()
+}
+
+/**
+ * 解析每条食材最终应使用的 `line_key`。
+ *
+ * 规则（**服务端判定，不信任客户端**）：
+ *   - 携带的 key 必须属于**当前菜谱现有行**，否则 400（外来 key）
+ *   - 现有行的 `definition_id` 与 `unit` **均未变** → 沿用
+ *   - `definition_id` 或 `unit` 变化 → 生成新值
+ *   - 未携带（新增行） → 生成新值
+ *
+ * ⚠️ `quantity` / `note` / 顺序变化**不**导致换 key。
+ *
+ * @param existingRows 该菜谱现有食材行（含 id 与 line_key）
+ */
+function resolveLineKeys(
+  existingRows: Array<{
+    id: number
+    line_key: string | null
+    definition_id: number
+    unit: string | null
+  }>,
+  ingredients: RecipeIngredientInput[],
+  recipeId: number,
+): string[] {
+  const byLineKey = new Map<string, { definition_id: number; unit: string | null }>()
+  for (const row of existingRows) {
+    if (row.line_key !== null) {
+      byLineKey.set(row.line_key, { definition_id: row.definition_id, unit: row.unit })
+    }
+  }
+
+  return ingredients.map((ing, index) => {
+    const requested = ing.line_key ?? null
+    if (requested === null) return newLineKey()
+
+    const current = byLineKey.get(requested)
+    if (current === undefined) {
+      // ★ 外来 / 陈旧 key —— 必须拒绝，且不得造成任何写操作
+      throw validationError(
+        `第 ${index + 1} 条食材的 line_key 不属于菜谱 ${recipeId}：${requested}`,
+      )
+    }
+
+    // definition_id 与 unit 均未变 → 沿用；任一变化 → 换新
+    const sameIdentity =
+      current.definition_id === ing.definition_id &&
+      (current.unit ?? null) === (ing.unit ?? null)
+    return sameIdentity ? requested : newLineKey()
+  })
+}
+
+/** 参与失效的会话状态（终态不参与） */
+const LIVE_SESSION_STATUSES = ['active', 'cooking', 'awaiting_settlement'] as const
+
+/**
+ * 使「引用该菜谱的**未结算**会话」整体失效。
+ *
+ * 三个动作**必须原子**：
+ *   ① 会话 `recipe_revision` +1
+ *   ② 删除这些会话的全部跳过确认
+ *   ③ 菜品 `confirmed_revision` 重置为 0
+ *
+ * ⚠️ 只影响引用**该菜谱**的会话 —— 保存其他菜谱不产生任何副作用。
+ * ⚠️ 终态会话（settled / abandoned）不参与，历史凭证不被改写。
+ *
+ * @returns 受影响的会话 id 列表
+ */
+function invalidateSessionsOfRecipe(tx: Tx, recipeId: number, timestamp: string): number[] {
+  const sessionIds = tx
+    .select({ session_id: cookingSessionDish.session_id })
+    .from(cookingSessionDish)
+    .innerJoin(cookingSession, eq(cookingSession.id, cookingSessionDish.session_id))
+    .where(eq(cookingSessionDish.recipe_id, recipeId))
+    .all()
+    .map((r) => r.session_id)
+    .filter((sid, i, arr) => arr.indexOf(sid) === i)
+
+  if (sessionIds.length === 0) return []
+
+  const liveIds = sessionIds.filter((sid) => {
+    const s = tx.select().from(cookingSession).where(eq(cookingSession.id, sid)).get()
+    return s !== undefined && (LIVE_SESSION_STATUSES as readonly string[]).includes(s.status)
+  })
+
+  if (liveIds.length === 0) return []
+
+  for (const sid of liveIds) {
+    tx.update(cookingSession)
+      .set({ recipe_revision: sql`${cookingSession.recipe_revision} + 1`, updated_at: timestamp })
+      .where(eq(cookingSession.id, sid))
+      .run()
+  }
+
+  tx.delete(cookingSessionDishSkip).where(inArray(cookingSessionDishSkip.session_id, liveIds)).run()
+
+  tx.update(cookingSessionDish)
+    .set({ confirmed_revision: 0, updated_at: timestamp })
+    .where(inArray(cookingSessionDish.session_id, liveIds))
+    .run()
+
+  return liveIds
+}
+
+/* ------------------------------------------------------------
  * 菜谱 CRUD
  * ------------------------------------------------------------ */
 
@@ -473,15 +756,23 @@ export function createRecipe(input: RecipeInput): number {
   const note = assertRecipeNote(input?.note)
   const ingredients = assertIngredients(input?.ingredients)
   const tagNames = assertTagNames(input?.tags)
+  const steps = assertSteps(input?.steps)
   assertRecipeNameAvailable(nameNormalized)
 
-  // ② 单事务写入三部分
+  // ② 单事务写入四部分（菜谱 / 食材 / 步骤 / Tag）
   return db.transaction((tx) => {
     const timestamp = nowIso()
 
     const created = tx
       .insert(recipe)
-      .values({ name, name_normalized: nameNormalized, note, created_at: timestamp, updated_at: timestamp })
+      .values({
+        name,
+        name_normalized: nameNormalized,
+        note,
+        content_revision: 0,
+        created_at: timestamp,
+        updated_at: timestamp,
+      })
       .returning({ id: recipe.id })
       .get()
 
@@ -493,7 +784,21 @@ export function createRecipe(input: RecipeInput): number {
           quantity: ing.quantity ?? null,
           unit: ing.unit ?? null,
           note: ing.note ?? null,
+          // 新建行一律生成新标识（调用方不传，传了也不采信）
+          line_key: newLineKey(),
           sort_order: index, // 顺序 = 数组下标
+          created_at: timestamp,
+          updated_at: timestamp,
+        })
+        .run()
+    })
+
+    steps.forEach((content, index) => {
+      tx.insert(recipeStep)
+        .values({
+          recipe_id: created.id,
+          step_no: index + 1, // 序号从 1 开始，由数组下标生成
+          content,
           created_at: timestamp,
           updated_at: timestamp,
         })
@@ -533,19 +838,56 @@ export function saveRecipeFull(id: number, input: RecipeInput): void {
   const note = assertRecipeNote(input?.note)
   const ingredients = assertIngredients(input?.ingredients)
   const tagNames = assertTagNames(input?.tags)
+  const steps = assertSteps(input?.steps)
   assertRecipeNameAvailable(nameNormalized, id)
 
-  // ② 单事务：三部分一起提交
+  // ② 服务端自行判断内容是否变化（**绝不信任客户端的 changed / isDirty 标记**）
+  const changed = isContentChanged(id, name, note, ingredients, steps)
+
   db.transaction((tx) => {
     const timestamp = nowIso()
 
-    // 2.1 基本信息
+    // ★ 无变化路径：不写任何内容、不递增版本、不触碰会话。
+    //   因此 recipe_ingredient.id 与 line_key 均保持不变。
+    //   ⚠️ Tag 关联仍需按请求同步（Tag 不参与内容比较），
+    //      但仅当关联集合确实不同时才重建，避免无谓写入。
+    if (!changed) {
+      syncTagLinks(tx, id, tagNames, timestamp)
+      return
+    }
+
+    /* ---------- 有变化路径：全量重建 + 版本递增 + 会话失效 ---------- */
+
+    // 2.0 ★ 先物化「受影响的会话 id」所需的数据：
+    //     食材行在 2.3 会被删除重建，因此 line_key 校验所需的现有行
+    //     必须在删除**之前**读取。
+    const existingRows = tx
+      .select({
+        id: recipeIngredient.id,
+        line_key: recipeIngredient.line_key,
+        definition_id: recipeIngredient.definition_id,
+        unit: recipeIngredient.unit,
+      })
+      .from(recipeIngredient)
+      .where(eq(recipeIngredient.recipe_id, id))
+      .all()
+
+    // 2.1 ★ line_key 解析（含「外来 key → 400」校验），必须在删除之前
+    const lineKeys = resolveLineKeys(existingRows, ingredients, id)
+
+    // 2.2 基本信息 + content_revision 递增
     tx.update(recipe)
-      .set({ name, name_normalized: nameNormalized, note, updated_at: timestamp })
+      .set({
+        name,
+        name_normalized: nameNormalized,
+        note,
+        content_revision: sql`${recipe.content_revision} + 1`,
+        updated_at: timestamp,
+      })
       .where(eq(recipe.id, id))
       .run()
 
-    // 2.2 食材关联：全删后按数组顺序重建
+    // 2.3 食材关联：全删后按数组顺序重建
     tx.delete(recipeIngredient).where(eq(recipeIngredient.recipe_id, id)).run()
     ingredients.forEach((ing, index) => {
       tx.insert(recipeIngredient)
@@ -555,6 +897,7 @@ export function saveRecipeFull(id: number, input: RecipeInput): void {
           quantity: ing.quantity ?? null,
           unit: ing.unit ?? null,
           note: ing.note ?? null,
+          line_key: lineKeys[index],
           sort_order: index,
           created_at: timestamp,
           updated_at: timestamp,
@@ -562,18 +905,60 @@ export function saveRecipeFull(id: number, input: RecipeInput): void {
         .run()
     })
 
-    // 2.3 Tag 关联：全删后重建
-    tx.delete(recipeTagLink).where(eq(recipeTagLink.recipe_id, id)).run()
-    for (const tagId of resolveTagIds(tx, tagNames)) {
-      tx.insert(recipeTagLink)
-        .values({ recipe_id: id, tag_id: tagId, created_at: timestamp })
+    // 2.4 步骤：全删后按数组顺序重建（step_no = 下标 + 1）
+    tx.delete(recipeStep).where(eq(recipeStep.recipe_id, id)).run()
+    steps.forEach((content, index) => {
+      tx.insert(recipeStep)
+        .values({
+          recipe_id: id,
+          step_no: index + 1,
+          content,
+          created_at: timestamp,
+          updated_at: timestamp,
+        })
         .run()
-    }
+    })
 
-    // ⚠️ 测试专用故障注入点：此处三部分均已写入。
+    // 2.5 Tag 关联同步
+    syncTagLinks(tx, id, tagNames, timestamp)
+
+    // 2.6 ★ 会话失效：仅引用该菜谱的**未结算**会话。
+    //     三件事（版本 +1 / 清空确认 / confirmed_revision 归零）在同一事务内。
+    const affected = invalidateSessionsOfRecipe(tx, id, timestamp)
+
+    // ⚠️ 测试专用故障注入点：此处内容、步骤、会话失效均已写入。
     //    未设置 HOME_CHEF_FAULT_INJECT 时是空操作，生产行为不受影响。
     faultPoint('recipe_full_save_after_links')
+
+    // 供调用方观测（不参与业务逻辑）
+    void affected
   })
+}
+
+/**
+ * 同步 Tag 关联（全删后按请求重建）。
+ *
+ * ⚠️ Tag **不参与内容比较**，因此在「无变化」路径中也会被调用；
+ *    但为避免无谓写入，仅当关联集合确实不同时才执行删除重建。
+ */
+function syncTagLinks(tx: Tx, recipeId: number, tagNames: string[], timestamp: string): void {
+  const before = tx
+    .select({ name: recipeTag.name })
+    .from(recipeTagLink)
+    .innerJoin(recipeTag, eq(recipeTag.id, recipeTagLink.tag_id))
+    .where(eq(recipeTagLink.recipe_id, recipeId))
+    .orderBy(asc(recipeTagLink.id))
+    .all()
+    .map((r) => r.name)
+
+  if (JSON.stringify(before) === JSON.stringify(tagNames)) return
+
+  tx.delete(recipeTagLink).where(eq(recipeTagLink.recipe_id, recipeId)).run()
+  for (const tagId of resolveTagIds(tx, tagNames)) {
+    tx.insert(recipeTagLink)
+      .values({ recipe_id: recipeId, tag_id: tagId, created_at: timestamp })
+      .run()
+  }
 }
 
 /**

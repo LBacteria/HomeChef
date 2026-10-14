@@ -101,6 +101,24 @@ export default function RecipeDetailView({ detail, onBack, onEdit, onDelete }: P
           <p className="recipe-detail-empty">（无食材）</p>
         )}
       </section>
+
+      {/* 烹饪步骤（v0.2.1） */}
+      <section className="recipe-detail-section">
+        <h3>步骤（{detail.steps.length}）</h3>
+        {detail.steps.length > 0 ? (
+          <ol className="recipe-detail-steps">
+            {detail.steps.map((s) => (
+              // ⚠️ 用 step_no 作 key：统一保存会重建步骤行，id 不稳定
+              <li key={s.step_no} className="recipe-detail-step">
+                <span className="recipe-detail-step-no">{s.step_no}</span>
+                <span className="recipe-detail-step-text">{s.content}</span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="recipe-detail-empty">（无步骤）</p>
+        )}
+      </section>
     </div>
   )
 }

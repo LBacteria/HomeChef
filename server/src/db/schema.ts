@@ -593,6 +593,16 @@ export const recipe = sqliteTable(
     /** 菜谱整体备注，可为空 */
     note: text('note'),
 
+    /**
+     * 菜谱内容版本号（v0.2.1）。
+     *
+     * 名称 / 备注 / 食材 / 步骤发生**实际内容变化**时 +1；
+     * 内容完全相同的重复保存**不递增**。
+     *
+     * 供烹饪会话检测「菜谱是否已被修改」（见 cooking_session.recipe_revision）。
+     */
+    content_revision: integer('content_revision').notNull().default(0),
+
     created_at: text('created_at').notNull(),
     updated_at: text('updated_at').notNull(),
   },
@@ -645,6 +655,18 @@ export const recipeIngredient = sqliteTable(
 
     /** 该食材的备注（例如「适量」「2 勺」「切丝」），可为空 */
     note: text('note'),
+
+    /**
+     * 稳定标识（v0.2.1）。
+     *
+     * `saveRecipeFull` 采用「全删后重建」，因此 `id` 每次保存都会变化，
+     * **不能**作为跳过确认的长期标识。`line_key` 由应用层按规则沿用：
+     *   - `definition_id` 与 `unit` 均未变 → 沿用
+     *   - 新增行，或上述字段变化       → 生成新值
+     *
+     * 因此 `quantity` / `note` 变化**不会**改变身份。
+     */
+    line_key: text('line_key'),
 
     /** 展示顺序：按用户添加顺序 */
     sort_order: integer('sort_order').notNull().default(0),
@@ -735,6 +757,367 @@ export const recipeTagLink = sqliteTable(
 )
 
 /* ============================================================
+ * v0.2.1 烹饪闭环
+ *
+ * 六张表：
+ *   recipe_step                 —— 菜谱步骤
+ *   cooking_session             —— 烹饪会话
+ *   cooking_session_dish        —— 会话中的菜品行（含份数与进度）
+ *   cooking_settlement          —— 结算凭证（幂等核心）
+ *   cooking_settlement_item     —— 结算明细（含跳过项）
+ *   cooking_session_dish_skip   —— 跳过确认（逐项持久化）
+ *
+ * ⚠️ 本阶段只建表 + 同步 schema；业务逻辑在后续批次。
+ * ============================================================ */
+
+/** 会话状态枚举 */
+export const COOKING_SESSION_STATUSES = [
+  'active',
+  'cooking',
+  'awaiting_settlement',
+  'settled',
+  'abandoned',
+] as const
+
+export type CookingSessionStatus = (typeof COOKING_SESSION_STATUSES)[number]
+
+/** 会话内菜品状态枚举 */
+export const COOKING_DISH_STATUSES = ['pending', 'done'] as const
+
+export type CookingDishStatus = (typeof COOKING_DISH_STATUSES)[number]
+
+/** 结算明细的处理结果枚举 */
+export const SETTLEMENT_OUTCOMES = [
+  'consumed',
+  'skipped_null_quantity',
+  'skipped_unit_mismatch',
+  'skipped_user',
+  'insufficient',
+] as const
+
+export type SettlementOutcome = (typeof SETTLEMENT_OUTCOMES)[number]
+
+/** 跳过确认的原因枚举 */
+export const DISH_SKIP_REASONS = ['null_quantity', 'unit_mismatch', 'user_choice'] as const
+
+export type DishSkipReason = (typeof DISH_SKIP_REASONS)[number]
+
+/**
+ * 菜谱步骤。
+ *
+ * - `step_no` 从 1 开始，`UNIQUE(recipe_id, step_no)` 保证不重号
+ * - 删除菜谱时步骤由 ON DELETE CASCADE 自动清理
+ */
+export const recipeStep = sqliteTable(
+  'recipe_step',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    recipe_id: integer('recipe_id')
+      .notNull()
+      .references(() => recipe.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    /** 步骤序号，从 1 开始 */
+    step_no: integer('step_no').notNull(),
+
+    /** 步骤正文（非空白） */
+    content: text('content').notNull(),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('recipe_step_recipe_id_step_no_unique').on(table.recipe_id, table.step_no),
+
+    // CHECK：步骤序号必须 >= 1
+    check('recipe_step_no_positive', sql`${table.step_no} >= 1`),
+
+    // CHECK：步骤正文不能是空白
+    check('recipe_step_content_not_blank', sql`length(trim(${table.content})) > 0`),
+
+    index('recipe_step_recipe_id_idx').on(table.recipe_id),
+  ],
+)
+
+/**
+ * 烹饪会话。
+ *
+ * 状态流转：
+ *   active → cooking → awaiting_settlement → settled   【终态】
+ *   active/cooking/awaiting_settlement → abandoned     【终态】
+ *
+ * ⚠️ `recipe_revision`：会话内菜品所依据的菜谱内容版本。
+ *    菜谱内容变化时（与保存菜谱同一事务）递增，使已保存的跳过确认整体失效。
+ */
+export const cookingSession = sqliteTable(
+  'cooking_session',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    /** active | cooking | awaiting_settlement | settled | abandoned */
+    status: text('status').notNull().default('active'),
+
+    /** 会话内菜品所依据的菜谱内容版本（单调递增） */
+    recipe_revision: integer('recipe_revision').notNull().default(0),
+
+    started_at: text('started_at').notNull(),
+
+    /** 全部菜品完成时写入 */
+    finished_at: text('finished_at'),
+
+    /** 结算成功时写入 */
+    settled_at: text('settled_at'),
+
+    /** 放弃时写入 */
+    abandoned_at: text('abandoned_at'),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [
+    // CHECK：状态必须显式属于枚举（用 CASE 返回 0/1，避免 NULL 三值逻辑）
+    check(
+      'cooking_session_status_in_enum',
+      sql`case
+        when ${table.status} in (${sql.raw(sqlLiteralList(COOKING_SESSION_STATUSES))}) then 1
+        else 0
+      end`,
+    ),
+
+    index('cooking_session_status_idx').on(table.status),
+  ],
+)
+
+/**
+ * 会话中的菜品行。
+ *
+ * ⚠️ **UNIQUE(session_id, recipe_id)**：同一会话重复添加同一菜谱 → 合并份数。
+ * ⚠️ `recipe_id` 用 ON DELETE RESTRICT：被烹饪会话引用的菜谱不能直接删除。
+ *
+ * `confirmed_revision` 语义（**派生值**，不是「是否写过确认」）：
+ *   - `0`                        = 必需跳过项**尚未确认齐全**
+ *   - `= session.recipe_revision` = **已齐全且版本一致**
+ */
+export const cookingSessionDish = sqliteTable(
+  'cooking_session_dish',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    session_id: integer('session_id')
+      .notNull()
+      .references(() => cookingSession.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    recipe_id: integer('recipe_id')
+      .notNull()
+      .references(() => recipe.id, {
+        onDelete: 'restrict',
+        onUpdate: 'cascade',
+      }),
+
+    /** 份数；实际需求量 = 菜谱用量 × 份数 */
+    servings: real('servings').notNull().default(1),
+
+    /** pending | done */
+    status: text('status').notNull().default('pending'),
+
+    /** 断点续做：当前步骤序号（NULL = 未开始） */
+    current_step_no: integer('current_step_no'),
+
+    /** 确认齐全时对应的会话 revision；0 = 未齐全 */
+    confirmed_revision: integer('confirmed_revision').notNull().default(0),
+
+    sort_order: integer('sort_order').notNull().default(0),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [
+    // ⚠️ 重复添加同一菜谱 → 合并份数，而不是新增行
+    uniqueIndex('cooking_session_dish_session_recipe_unique').on(table.session_id, table.recipe_id),
+
+    // CHECK：份数必须为正
+    check('cooking_dish_servings_positive', sql`${table.servings} > 0`),
+
+    // CHECK：状态枚举（CASE 显式返回 0/1）
+    check(
+      'cooking_dish_status_in_enum',
+      sql`case
+        when ${table.status} in (${sql.raw(sqlLiteralList(COOKING_DISH_STATUSES))}) then 1
+        else 0
+      end`,
+    ),
+
+    // CHECK：步骤序号若不为空，必须 >= 1
+    check(
+      'cooking_dish_current_step_positive',
+      sql`${table.current_step_no} is null or ${table.current_step_no} >= 1`,
+    ),
+
+    index('cooking_session_dish_session_id_idx').on(table.session_id),
+  ],
+)
+
+/**
+ * 结算凭证 —— **幂等核心**。
+ *
+ * ⚠️⚠️ `UNIQUE(session_id)` 是防止重复结算的**数据库级最终防线**：
+ *    结算事务第一步即 INSERT 本表，唯一冲突即表示已结算，
+ *    不依赖应用层「先查后插」，并发下也只有一者能成功。
+ */
+export const cookingSettlement = sqliteTable(
+  'cooking_settlement',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    session_id: integer('session_id')
+      .notNull()
+      .references(() => cookingSession.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    settled_at: text('settled_at').notNull(),
+    created_at: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('cooking_settlement_session_id_unique').on(table.session_id),
+  ],
+)
+
+/**
+ * 结算明细（含跳过项）。
+ *
+ * ⚠️ 正式凭证**只记录成功结算的最终结果**；
+ *    `insufficient` 仅用于预览判定，失败结算不写入本表。
+ */
+export const cookingSettlementItem = sqliteTable(
+  'cooking_settlement_item',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    settlement_id: integer('settlement_id')
+      .notNull()
+      .references(() => cookingSettlement.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    dish_id: integer('dish_id')
+      .notNull()
+      .references(() => cookingSessionDish.id, {
+        onDelete: 'restrict',
+        onUpdate: 'cascade',
+      }),
+
+    /** 来源菜谱食材行的稳定标识（冗余保存，供审计对齐） */
+    line_key: text('line_key'),
+
+    definition_id: integer('definition_id')
+      .notNull()
+      .references(() => ingredientDefinition.id, {
+        onDelete: 'restrict',
+        onUpdate: 'cascade',
+      }),
+
+    unit: text('unit'),
+
+    /** 聚合后的应扣量（NULL = 用量为空） */
+    required_quantity: real('required_quantity'),
+
+    consumed_quantity: real('consumed_quantity').notNull().default(0),
+
+    /** consumed | skipped_null_quantity | skipped_unit_mismatch | skipped_user | insufficient */
+    outcome: text('outcome').notNull(),
+
+    created_at: text('created_at').notNull(),
+  },
+  (table) => [
+    // CHECK：结果枚举（CASE 显式返回 0/1）
+    check(
+      'settlement_item_outcome_in_enum',
+      sql`case
+        when ${table.outcome} in (${sql.raw(sqlLiteralList(SETTLEMENT_OUTCOMES))}) then 1
+        else 0
+      end`,
+    ),
+
+    // CHECK：已扣数量非负
+    check('settlement_item_consumed_non_negative', sql`${table.consumed_quantity} >= 0`),
+
+    index('cooking_settlement_item_settlement_id_idx').on(table.settlement_id),
+    index('cooking_settlement_item_definition_id_idx').on(table.definition_id),
+  ],
+)
+
+/**
+ * 跳过确认（逐项持久化）。
+ *
+ * ⚠️⚠️ `UNIQUE(dish_id, line_key)`：每个确认精确对应**一条原始需求行**，
+ *    因此「同一菜谱中同食材同单位的多条需求」也不会确认错项。
+ *
+ * ⚠️ `line_key` **不建外键** —— 它指向 recipe_ingredient.line_key，
+ *    但为避免菜谱全删重建时产生意外级联，一致性由应用层保证。
+ */
+export const cookingSessionDishSkip = sqliteTable(
+  'cooking_session_dish_skip',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    session_id: integer('session_id')
+      .notNull()
+      .references(() => cookingSession.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    dish_id: integer('dish_id')
+      .notNull()
+      .references(() => cookingSessionDish.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    /** 对应的菜谱食材行稳定标识 */
+    line_key: text('line_key').notNull(),
+
+    definition_id: integer('definition_id')
+      .notNull()
+      .references(() => ingredientDefinition.id, {
+        onDelete: 'restrict',
+        onUpdate: 'cascade',
+      }),
+
+    /** 单位归一化键：unit ?? '' */
+    unit_key: text('unit_key').notNull().default(''),
+
+    /** null_quantity | unit_mismatch | user_choice */
+    reason: text('reason').notNull(),
+
+    confirmed_at: text('confirmed_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('cooking_session_dish_skip_dish_line_unique').on(table.dish_id, table.line_key),
+
+    // CHECK：原因枚举（CASE 显式返回 0/1）
+    check(
+      'dish_skip_reason_in_enum',
+      sql`case
+        when ${table.reason} in (${sql.raw(sqlLiteralList(DISH_SKIP_REASONS))}) then 1
+        else 0
+      end`,
+    ),
+
+    index('cooking_session_dish_skip_session_id_idx').on(table.session_id),
+  ],
+)
+
+/* ============================================================
  * 类型导出
  * ============================================================ */
 
@@ -764,3 +1147,17 @@ export type RecipeTag = typeof recipeTag.$inferSelect
 export type NewRecipeTag = typeof recipeTag.$inferInsert
 export type RecipeTagLink = typeof recipeTagLink.$inferSelect
 export type NewRecipeTagLink = typeof recipeTagLink.$inferInsert
+
+/* ---- v0.2.1 烹饪闭环 ---- */
+export type RecipeStep = typeof recipeStep.$inferSelect
+export type NewRecipeStep = typeof recipeStep.$inferInsert
+export type CookingSession = typeof cookingSession.$inferSelect
+export type NewCookingSession = typeof cookingSession.$inferInsert
+export type CookingSessionDish = typeof cookingSessionDish.$inferSelect
+export type NewCookingSessionDish = typeof cookingSessionDish.$inferInsert
+export type CookingSettlement = typeof cookingSettlement.$inferSelect
+export type NewCookingSettlement = typeof cookingSettlement.$inferInsert
+export type CookingSettlementItem = typeof cookingSettlementItem.$inferSelect
+export type NewCookingSettlementItem = typeof cookingSettlementItem.$inferInsert
+export type CookingSessionDishSkip = typeof cookingSessionDishSkip.$inferSelect
+export type NewCookingSessionDishSkip = typeof cookingSessionDishSkip.$inferInsert

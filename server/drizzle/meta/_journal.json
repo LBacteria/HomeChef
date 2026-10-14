@@ -64,6 +64,20 @@
       "when": 1791580800000,
       "tag": "0008_recipe_list_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791667200000,
+      "tag": "0009_cooking_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791753600000,
+      "tag": "0010_recipe_ingredient_line_key",
+      "breakpoints": true
     }
   ]
 }

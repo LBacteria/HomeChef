@@ -329,6 +329,21 @@ export interface RecipeIngredientDetail {
   note: string | null
   /** 展示顺序，等于添加顺序 */
   sort_order: number
+  /**
+   * 稳定标识（v0.2.1）。
+   *
+   * ⚠️ 后端 `saveRecipeFull` 采用「全删后重建」，`id` 会变化，
+   *    因此**跳过确认必须用它**而不是 `id`。
+   */
+  line_key: string | null
+}
+
+/** 菜谱步骤（v0.2.1） */
+export interface RecipeStepDetail {
+  id: number
+  /** 从 1 开始 */
+  step_no: number
+  content: string
 }
 
 /** 菜谱详情（GET /api/recipes/:id） */
@@ -336,10 +351,14 @@ export interface RecipeDetail {
   id: number
   name: string
   note: string | null
+  /** 菜谱内容版本号（v0.2.1）；内容变化时递增 */
+  content_revision: number
   created_at: string
   updated_at: string
   tags: string[]
   ingredients: RecipeIngredientDetail[]
+  /** 烹饪步骤（v0.2.1） */
+  steps: RecipeStepDetail[]
 }
 
 /**
@@ -352,6 +371,14 @@ export interface RecipeIngredientInput {
   quantity?: number | null
   unit?: string | null
   note?: string | null
+  /**
+   * 稳定标识（v0.2.1）。
+   *
+   * ⚠️ 编辑既有菜谱时应**回传**后端给出的 `line_key`，
+   *    否则该行会被视为新增并换新标识，导致相关跳过确认失效。
+   *    仅当 `definition_id` 或 `unit` 变化时后端才会换新值。
+   */
+  line_key?: string | null
 }
 
 /**
@@ -365,6 +392,8 @@ export interface RecipeInput {
   /** 至少一条；允许重复引用同一个 definition_id */
   ingredients: RecipeIngredientInput[]
   tags?: string[]
+  /** 步骤列表（v0.2.1）；序号由数组顺序决定，不传 = 无步骤 */
+  steps?: string[]
 }
 
 /** 列表查询参数（GET /api/recipes） */
@@ -402,6 +431,146 @@ export interface UpdateRecipeListSettingsInput {
   sort_order?: RecipeSortOrder
   tag_mode?: RecipeTagMode
   selected_tags?: string[]
+}
+
+/* ============================================================
+ * 烹饪会话（v0.2.1）
+ *
+ * ⚠️ 以下类型严格对应后端 `cookingService.ts` / `settlementService.ts`
+ *    的实际响应结构，不得凭空增删字段。
+ * ============================================================ */
+
+/** 会话状态（后端 cooking_session.status 的 CHECK 枚举） */
+export type CookingSessionStatus =
+  | 'active'
+  | 'cooking'
+  | 'awaiting_settlement'
+  | 'settled'
+  | 'abandoned'
+
+/** 会话内菜品状态 */
+export type CookingDishStatus = 'pending' | 'done'
+
+/** 跳过确认原因 */
+export type DishSkipReason = 'null_quantity' | 'unit_mismatch' | 'user_choice'
+
+/** 结算明细的处理结果（后端 SETTLEMENT_OUTCOMES） */
+export type SettlementOutcome =
+  | 'consumed'
+  | 'skipped_null_quantity'
+  | 'skipped_unit_mismatch'
+  | 'skipped_user'
+  | 'insufficient'
+
+/** 会话列表项（GET /api/cooking/sessions） */
+export interface CookingSessionSummary {
+  id: number
+  status: CookingSessionStatus
+  recipe_revision: number
+  started_at: string
+  dish_count: number
+  created_at: string
+  updated_at: string
+}
+
+/** 会话中的一道菜（GET /api/cooking/sessions/:id 的 dishes[]） */
+export interface CookingDishDetail {
+  id: number
+  recipe_id: number
+  recipe_name: string
+  servings: number
+  status: CookingDishStatus
+  /** 当前步骤序号；null = 未开始 */
+  current_step_no: number | null
+  confirmed_revision: number
+  sort_order: number
+  /** 该菜谱当前步骤总数（后端提供，供进度上界校验） */
+  step_count: number
+  /** 已确认齐全且版本一致 */
+  confirmed: boolean
+}
+
+/** 会话详情 */
+export interface CookingSessionDetail {
+  id: number
+  status: CookingSessionStatus
+  recipe_revision: number
+  started_at: string
+  finished_at: string | null
+  settled_at: string | null
+  abandoned_at: string | null
+  created_at: string
+  updated_at: string
+  dishes: CookingDishDetail[]
+}
+
+/** 跳过确认记录（GET /api/cooking/sessions/:id/skips） */
+export interface CookingSkipRecord {
+  id: number
+  dish_id: number
+  line_key: string
+  definition_id: number
+  definition_name: string
+  unit_key: string
+  reason: DishSkipReason
+  confirmed_at: string
+}
+
+/** 保存跳过确认的请求项 */
+export interface SkipConfirmationInput {
+  dish_id: number
+  line_key: string
+  reason: DishSkipReason
+}
+
+/* ---------- 结算 ---------- */
+
+/** 结算预览中的一项（GET .../settle/preview） */
+export interface SettlementPreviewItem {
+  dish_id: number
+  line_key: string | null
+  definition_id: number
+  definition_name: string
+  unit: string | null
+  required_quantity: number | null
+  /** 当前库存可扣总量（单位一致） */
+  available_quantity: number
+  /** 后端判定的必需确认原因；null = 无需确认 */
+  required_reason: DishSkipReason | null
+  /** 该需求是否已有有效确认 */
+  confirmed: boolean
+  /** 是否可直接扣减（无需确认且库存充足） */
+  can_consume: boolean
+}
+
+/** 结算预览响应 */
+export interface SettlementPreview {
+  session_id: number
+  status: CookingSessionStatus
+  items: SettlementPreviewItem[]
+  needing_confirmation: number
+  ready: boolean
+}
+
+/** 结算结果中的一项 */
+export interface SettlementItemResult {
+  dish_id: number
+  line_key: string | null
+  definition_id: number
+  definition_name: string
+  unit: string | null
+  required_quantity: number | null
+  consumed_quantity: number
+  outcome: SettlementOutcome
+}
+
+/** 结算执行结果（POST .../settle） */
+export interface SettlementResult {
+  settlement_id: number
+  session_id: number
+  settled_at: string
+  items: SettlementItemResult[]
+  summary: Record<SettlementOutcome, number>
 }
 
 /* ============================================================

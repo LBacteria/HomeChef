@@ -10,6 +10,100 @@ HomeChef 的版本变更记录。
 
 ---
 
+## [0.2.1] - 2026-10-14
+
+烹饪闭环：菜谱步骤、烹饪会话、结算与库存扣减。
+
+> ⚠️ 本版本**不包含**菜谱推荐、AI、采购清单、单位换算。
+> 结算**不做**自动单位换算：单位与库存不一致的原料必须由用户逐项确认跳过。
+
+### Added
+
+**数据库（迁移 `0009` / `0010`）**
+
+- 新增六张表：`recipe_step`（菜谱步骤）、`cooking_session`（烹饪会话）、
+  `cooking_session_dish`（会话中的菜品，含份数与进度）、
+  `cooking_settlement`（结算凭证）、`cooking_settlement_item`（结算明细，含跳过项）、
+  `cooking_session_dish_skip`（逐项跳过确认），迁移文件 `0009_cooking_tables.sql`
+- `recipe` 新增 `content_revision`（菜谱内容版本号，内容变化时递增）
+- `recipe_ingredient` 新增 `line_key`（食材行的**稳定标识**），
+  迁移 `0010_recipe_ingredient_line_key.sql` 回填历史行并建立唯一索引
+- **幂等核心**：`cooking_settlement.session_id` 上的 UNIQUE 约束，
+  使并发下只有一个事务能成功写入凭证
+
+**菜谱步骤**
+
+- 步骤保存整合进 `PATCH /api/recipes/:id/full` 统一保存事务（顺序即 `step_no`）
+- 菜谱详情返回 `steps` 与 `content_revision`
+- 前端菜谱表单支持步骤的增删改与上下移动；菜谱详情页展示步骤列表
+
+**烹饪会话 API**
+
+- `GET /api/cooking/sessions`、`POST /api/cooking/sessions`、
+  `GET /api/cooking/sessions/:id`、`POST /api/cooking/sessions/:id/abandon`
+- `POST|PATCH|DELETE /api/cooking/sessions/:id/dishes[/:dishId/...]`
+  （加菜 / 改份数 / 改进度 / 删菜）
+- **重复添加同一菜谱合并份数**（由 `UNIQUE(session_id, recipe_id)` 保证）
+- 会话状态流转：`active` → `cooking` → `awaiting_settlement` → `settled`（终态）；
+  `settled` / `abandoned` 均不可再修改
+
+**跳过确认**
+
+- `GET|POST /api/cooking/sessions/:id/skips`、
+  `DELETE /api/cooking/sessions/:id/dishes/:dishId/skips/:lineKey`
+- 逐项确认以 `(dish_id, line_key)` 唯一标识，避免同食材同单位的多条需求确认错项
+- `confirmed_revision` 为**派生值**：只有全部必需确认项均已确认才写入当前会话版本，
+  部分确认一律为 `0`
+
+**结算**
+
+- `GET /api/cooking/sessions/:id/settle/preview`（只读预览）
+- `POST /api/cooking/sessions/:id/settle`（执行结算）
+- 库存按**到期日优先**扣减：有到期日的优先，按到期日升序，`NULL` 到期日排最后
+- 结算在**单一事务**内完成库存扣减、凭证写入、明细写入与会话状态变更；
+  任一失败整体回滚，不留部分扣减
+
+**前端烹饪页**
+
+- 新增「烹饪」导航入口与烹饪页面：会话列表、会话详情、
+  菜品管理、步骤进度、跳过确认、结算预览与结算结果展示
+- 结算前会先保存所有待提交的份数变更并重新拉取服务端预览，
+  份数保存失败或预览不就绪时不执行结算
+
+### Changed
+
+- 导航顺序为 **库存 / 食材库 / 菜谱 / 烹饪 / 设置**（新增「烹饪」入口）
+- `saveRecipeFull` 改为**先比较内容再决定是否写入**：
+  内容完全相同时不重建食材与步骤、不递增 `content_revision`、不触碰会话
+- 菜谱内容变化时，引用该菜谱的**未结算**会话整体失效
+  （`recipe_revision` 递增、跳过确认清空、`confirmed_revision` 归零），
+  且与菜谱保存位于**同一事务**
+- 菜谱保存时，未改动的食材行 `line_key` 保持不变；
+  `definition_id` 或 `unit` 变化时生成新标识
+
+### Fixed
+
+- **修复 `verify` 脚本与迁移入口的数据库路径安全隐患**：
+  `assertSafeDbPath()` 提取为 `server/src/db/safe-db-path.ts` 单一实现，
+  由 harness 与迁移入口共用；`db:migrate` 改为**先校验路径再动态导入数据库模块**，
+  未设置 `HOME_CHEF_DB_PATH` 或路径指向真实库时在打开数据库之前退出
+
+### 已知限制（**未验证事项**）
+
+> ⚠️ 以下内容在 v0.2.1 发布时**尚未取得直接验证证据**，如实记录，不得视为已通过：
+
+- 场景 B（重复结算）与场景 D（跳过确认重校验）的**具体错误码**未从响应体取得直接证据，
+  仅确认返回 HTTP **409**
+- **前端并发/竞态**（改份数后立即点结算）**未经真实 UI 验证**，
+  后端只验证了顺序请求语义
+- 结算凭证表的**精确行数**无查询 API，只能通过 409 响应间接推断
+- 场景 A 的**到期日优先扣减顺序**未重新验证
+  （曾判定为缺陷，后经 SQL 构造诊断撤销该判定）
+- 迁移 `0010` 的 `line_key` **回填结果未逐行核对**
+- 库存单位发生「不匹配 → 匹配」变化时，不会主动失效既有确认
+  （安全性依赖结算时的重新计算）
+
+
 ## [0.2.0] - 2026-10-12
 
 菜谱模块（Phase 3）与库存搜索。

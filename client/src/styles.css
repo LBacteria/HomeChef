@@ -2160,3 +2160,395 @@ button.danger:hover:not(:disabled) {
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* ============================================================
+ * 烹饪会话（v0.2.1 B4）
+ * ============================================================ */
+
+.cooking-session-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.cooking-session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.cooking-session-open {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.25rem;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.cooking-session-open:hover {
+  background: #f0f0f0;
+}
+
+.cooking-session-id {
+  font-weight: 600;
+}
+
+.cooking-session-meta,
+.cooking-session-time,
+.cooking-overview-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.cooking-status {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  background: #e8e8e8;
+  color: #333;
+}
+
+.cooking-status-cooking {
+  background: #fff3cd;
+  color: #7a5b00;
+}
+
+.cooking-status-awaiting_settlement {
+  background: #d9edf7;
+  color: #245b73;
+}
+
+.cooking-status-settled {
+  background: #dff0d8;
+  color: #2e5c1f;
+}
+
+.cooking-status-abandoned {
+  background: #f2dede;
+  color: #7a2a26;
+}
+
+.cooking-overview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.cooking-terminal-note {
+  background: #f5f5f5;
+  border-left: 3px solid var(--muted);
+  padding: 0.5rem 0.75rem;
+  color: var(--muted);
+}
+
+.cooking-action-error {
+  background: #fdecea;
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  padding: 0.5rem 0.75rem;
+}
+
+.cooking-add-dish {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.75rem;
+  margin: 1rem 0;
+}
+
+.cooking-add-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cooking-add-row select {
+  min-width: 12rem;
+  padding: 0.35rem;
+}
+
+.cooking-servings-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.cooking-servings-input input {
+  width: 5rem;
+  padding: 0.3rem;
+}
+
+.cooking-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.4rem 0 0;
+}
+
+.cooking-dish-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.cooking-dish-item {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.cooking-dish-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.cooking-dish-name {
+  font-weight: 600;
+}
+
+.cooking-dish-state {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.cooking-dish-state.done {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.cooking-dish-warn {
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
+.cooking-dish-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cooking-dish-progress {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.cooking-steps {
+  margin-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.75rem;
+}
+
+.cooking-step-list {
+  padding-left: 1.25rem;
+  margin: 0 0 0.5rem;
+}
+
+.cooking-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.cooking-step.current {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.cooking-step-text {
+  flex: 1;
+}
+
+.cooking-danger-zone {
+  margin: 1.5rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.cooking-settle {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.cooking-preview {
+  margin-top: 0.75rem;
+}
+
+.cooking-preview-summary {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.cooking-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.cooking-preview-table th,
+.cooking-preview-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+
+.cooking-preview-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.cooking-need-confirm {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.cooking-ok {
+  color: var(--primary);
+  font-size: 0.85rem;
+}
+
+.cooking-bad {
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.cooking-confirm-actions {
+  margin: 0.75rem 0;
+}
+
+.cooking-settle-action {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.cooking-settle-result {
+  margin-top: 1rem;
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  padding: 0.75rem;
+  background: #f4faf6;
+}
+
+.cooking-settle-result h4 {
+  margin: 0 0 0.5rem;
+  color: var(--primary);
+}
+
+.cooking-settle-result ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.cooking-skips {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.cooking-skips ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.cooking-skips li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cooking-skip-reason {
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex: 1;
+}
+
+/* ---------- 菜谱步骤编辑（v0.2.1） ---------- */
+
+.recipe-step-edit-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.5rem;
+}
+
+.recipe-step-edit-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.recipe-step-no {
+  min-width: 1.5rem;
+  padding-top: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.recipe-step-input {
+  flex: 1;
+  padding: 0.35rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  resize: vertical;
+}
+
+.recipe-step-actions {
+  display: flex;
+  gap: 0.25rem;
+  padding-top: 0.25rem;
+}
+
+.recipe-detail-steps {
+  padding-left: 1.25rem;
+  margin: 0;
+}
+
+.recipe-detail-step {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+}
+
+.recipe-detail-step-no {
+  min-width: 1.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.recipe-detail-step-text {
+  flex: 1;
+}
+
+.cooking-pending-badge {
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  background: #fff3cd;
+  color: #7a5b00;
+  font-size: 0.75rem;
+}

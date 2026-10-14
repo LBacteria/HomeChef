@@ -67,6 +67,15 @@ interface IngredientDraft {
   unit: string
   /** 该配料的备注 */
   note: string
+  /**
+   * 稳定标识（v0.2.1）。
+   *
+   * ⚠️ 编辑既有菜谱时必须**原样回传**后端给出的 `line_key`：
+   *    后端保存采用「全删后重建」，不回传会被当作新增行并换新标识，
+   *    导致引用该行的烹饪跳过确认全部失效。
+   *    新建菜谱时为 `null`（由后端生成）。
+   */
+  line_key: string | null
 }
 
 /**
@@ -90,7 +99,18 @@ function emptyIngredient(): IngredientDraft {
     quantity: '',
     unit: '',
     note: '',
+    line_key: null,
   }
+}
+
+/** 步骤草稿（v0.2.1） */
+interface StepDraft {
+  key: string
+  content: string
+}
+
+function emptyStep(): StepDraft {
+  return { key: makeDraftKey(), content: '' }
 }
 
 export default function RecipeCreateForm({ open, allTags, initial = null, onCancel, onSaved }: Props) {
@@ -100,6 +120,8 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
   const [note, setNote] = useState('')
   const [ingredients, setIngredients] = useState<IngredientDraft[]>([emptyIngredient()])
   const [selectedTags, setSelectedTags] = useState<string[]>([])
+  /** 步骤草稿（v0.2.1）；允许为空数组（菜谱可以没有步骤） */
+  const [steps, setSteps] = useState<StepDraft[]>([])
 
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -135,15 +157,24 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
               quantity: ing.quantity === null ? '' : String(ing.quantity),
               unit: ing.unit ?? '',
               note: ing.note ?? '',
+              // ⚠️ 必须原样带回，否则后端会视为新增行并换新标识
+              line_key: ing.line_key,
             }))
           : [emptyIngredient()],
       )
       setSelectedTags(initial.tags)
+      // ⚠️ 步骤：按 step_no 升序回填（后端已排序，这里再排一次以防万一）
+      setSteps(
+        [...initial.steps]
+          .sort((a, b) => a.step_no - b.step_no)
+          .map((s) => ({ key: makeDraftKey(), content: s.content })),
+      )
     } else {
       setName('')
       setNote('')
       setIngredients([emptyIngredient()])
       setSelectedTags([])
+      setSteps([])
     }
 
     setFormError(null)
@@ -169,6 +200,29 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
 
   function removeIngredient(key: string) {
     setIngredients((prev) => (prev.length <= 1 ? prev : prev.filter((d) => d.key !== key)))
+  }
+
+  /* ---------- 步骤行操作（v0.2.1） ---------- */
+
+  function updateStep(key: string, content: string) {
+    setSteps((prev) => prev.map((s) => (s.key === key ? { ...s, content } : s)))
+  }
+
+  function removeStep(key: string) {
+    setSteps((prev) => prev.filter((s) => s.key !== key))
+  }
+
+  /** 上移 / 下移一步；顺序即 step_no，因此顺序变化会被后端视为内容变化 */
+  function moveStep(index: number, delta: number) {
+    setSteps((prev) => {
+      const next = [...prev]
+      const target = index + delta
+      if (target < 0 || target >= next.length) return prev
+      const tmp = next[index]
+      next[index] = next[target]
+      next[target] = tmp
+      return next
+    })
   }
 
   /* ---------- 取消（不产生任何写入）---------- */
@@ -234,9 +288,13 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
           quantity: raw.length === 0 ? null : Number(raw),
           unit: d.unit === '' ? null : d.unit,
           note: d.note.trim().length === 0 ? null : d.note.trim(),
+          // ⚠️ 编辑时必须回传既有标识；新建时为 null（后端生成）
+          line_key: d.line_key,
         }
       }),
       tags: selectedTags,
+      // ⚠️ 步骤：过滤空白项，顺序即 step_no（后端按下标生成 1..N）
+      steps: steps.map((s) => s.content.trim()).filter((c) => c.length > 0),
     }
 
     /*
@@ -261,6 +319,7 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
       setNote('')
       setIngredients([emptyIngredient()])
       setSelectedTags([])
+      setSteps([])
       onSaved(detail)
     } catch (e) {
       // ⚠️ 失败时**保留全部输入**，仅显示错误
@@ -413,6 +472,57 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
 
           <button type="button" className="recipe-add-ingredient" disabled={saving} onClick={addIngredient}>
             + 添加配料
+          </button>
+        </div>
+
+        {/* 步骤（v0.2.1） */}
+        <div className="field-block">
+          <span className="field-label">烹饪步骤（可选）</span>
+
+          {steps.length === 0 && <p className="recipe-create-tag-empty">暂无步骤。</p>}
+
+          <ul className="recipe-step-edit-list">
+            {steps.map((s, index) => (
+              <li key={s.key} className="recipe-step-edit-item">
+                <span className="recipe-step-no">{index + 1}</span>
+                <textarea
+                  className="recipe-step-input"
+                  rows={2}
+                  value={s.content}
+                  disabled={saving}
+                  placeholder={`第 ${index + 1} 步`}
+                  onChange={(e) => updateStep(s.key, e.target.value)}
+                />
+                <div className="recipe-step-actions">
+                  <button
+                    type="button"
+                    disabled={saving || index === 0}
+                    onClick={() => moveStep(index, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving || index === steps.length - 1}
+                    onClick={() => moveStep(index, 1)}
+                  >
+                    ↓
+                  </button>
+                  <button type="button" disabled={saving} onClick={() => removeStep(s.key)}>
+                    删除
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <button
+            type="button"
+            className="recipe-add-ingredient"
+            disabled={saving}
+            onClick={() => setSteps((prev) => [...prev, emptyStep()])}
+          >
+            + 添加步骤
           </button>
         </div>
 

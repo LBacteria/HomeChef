@@ -29,6 +29,11 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   RECIPE_NOT_FOUND: 404,
   TAG_NOT_FOUND: 404,
   HAS_RECIPE: 409,
+  // v0.2.1 烹饪闭环
+  SESSION_NOT_FOUND: 404,
+  SESSION_STATE_INVALID: 409,
+  DISH_NOT_FOUND: 404,
+  REVISION_STALE: 409,
 }
 
 /** 统一错误响应体（ARCHITECTURE.md 第 9.2 节） */

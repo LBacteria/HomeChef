@@ -26,6 +26,11 @@ export type ServiceErrorCode =
   | 'RECIPE_NOT_FOUND'
   | 'TAG_NOT_FOUND'
   | 'HAS_RECIPE'
+  // v0.2.1 烹饪闭环
+  | 'SESSION_NOT_FOUND'
+  | 'SESSION_STATE_INVALID'
+  | 'DISH_NOT_FOUND'
+  | 'REVISION_STALE'
 
 /**
  * Service 业务错误。
@@ -158,4 +163,41 @@ export function categoryInUseError(message: string): ServiceError {
  */
 export function categoryTransitionNotAllowedError(message: string): ServiceError {
   return new ServiceError('CATEGORY_TRANSITION_NOT_ALLOWED', message)
+}
+
+/* ------------------------------------------------------------
+ * v0.2.1 烹饪闭环
+ * ------------------------------------------------------------ */
+
+/**
+ * 烹饪会话不存在（HTTP 404）。
+ */
+export function sessionNotFoundError(message: string): ServiceError {
+  return new ServiceError('SESSION_NOT_FOUND', message)
+}
+
+/**
+ * 会话状态不允许该操作（HTTP 409）。
+ *
+ * 规则：`settled` 与 `abandoned` 是**终态**，不可再修改。
+ */
+export function sessionStateInvalidError(message: string): ServiceError {
+  return new ServiceError('SESSION_STATE_INVALID', message)
+}
+
+/**
+ * 会话中的菜品不存在（HTTP 404）。
+ */
+export function dishNotFoundError(message: string): ServiceError {
+  return new ServiceError('DISH_NOT_FOUND', message)
+}
+
+/**
+ * 跳过确认所依据的菜谱版本已过期（HTTP 409）。
+ *
+ * 触发条件：`dish.confirmed_revision !== session.recipe_revision`，
+ * 即菜谱在用户确认之后被修改过（或从未确认齐全）。
+ */
+export function revisionStaleError(message: string): ServiceError {
+  return new ServiceError('REVISION_STALE', message)
 }

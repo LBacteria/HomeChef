@@ -48,6 +48,9 @@ const ingredientItemSchema = {
     quantity: { type: ['number', 'null'], minimum: 0 },
     unit: { type: ['string', 'null'] },
     note: { type: ['string', 'null'] },
+    // ⚠️ v0.2.1：稳定标识。必须是**当前菜谱已有**的 line_key，
+    //    是否合法由 Service 层在事务内对照现有行校验（入口只做类型约束）。
+    line_key: { type: ['string', 'null'] },
   },
 } as const
 
@@ -62,6 +65,8 @@ const recipeBodySchema = {
     // ⚠️ minItems: 1 —— 菜谱至少需要一个食材
     ingredients: { type: 'array', minItems: 1, items: ingredientItemSchema },
     tags: { type: 'array', items: { type: 'string', minLength: 1 } },
+    // ⚠️ v0.2.1：步骤列表，序号由数组顺序决定（不传 = 无步骤）
+    steps: { type: 'array', items: { type: 'string', minLength: 1 } },
   },
 } as const
 
