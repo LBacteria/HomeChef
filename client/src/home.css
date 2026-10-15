@@ -1,0 +1,682 @@
+/* ============================================================
+ * HomeChef v0.2.2 —— 中式灶台主页 与 紧凑导航
+ *
+ * 设计基调：米白釉面砖 / 搪瓷面板、铸铁炭黑、陶土棕、少量暖橙火光。
+ * 不含绿植主题、不含红灯笼等传统符号。
+ *
+ * 分层原则：
+ *   - 背景照片是**装饰层**（pointer-events: none），文字与按钮全部真实 DOM；
+ *   - 圆环扇形由内联 SVG 绘制，`clip-path` 把按钮限制在本象限，
+ *     使 hover / focus / 按压都作用在扇形本身上。
+ * ============================================================ */
+
+:root {
+  /* 搪瓷面板 */
+  --stove-enamel: #f7f0e2;
+  --stove-enamel-shade: #e6d9c1;
+  --stove-edge: #a9784c;
+  --stove-edge-soft: #c8a179;
+  /* 铸铁 */
+  --stove-iron: #2a2521;
+  --stove-iron-2: #4a3f36;
+  /* 暖橙火光 */
+  --stove-fire: #e2701f;
+  --stove-fire-soft: #ff9a4d;
+  /* 陶土棕与墨色 */
+  --stove-clay: #9c5a34;
+  --stove-ink: #3a2f27;
+  --stove-cream-text: #fdf7ec;
+}
+
+/* ------------------------------------------------------------
+ * 一、主页容器与背景
+ * ------------------------------------------------------------ */
+
+.home {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-x: hidden;
+  background: #241d18;
+}
+
+/* 背景照片：纯装饰，绝不接收点击 */
+.home-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 34%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+/*
+ * 背景遮罩（低对比处理，v0.2.2 修复轮）
+ *   ① 顶部压一层暖白 —— 参考图里品牌与标题是**深炭棕字**压在米白砖墙上；
+ *      顶部提亮后深棕字才清晰，同时把背景厨具的干扰压下去；
+ *   ② 灶台区域加一圈柔和暗晕 —— 让米白弧形与铸铁灶眼从砖墙里「跳」出来；
+ *   ③ 底部略暗收边，保留纵深。
+ */
+.home-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      66% 60% at 50% 54%,
+      rgba(22, 15, 10, 0.32) 0%,
+      rgba(22, 15, 10, 0) 76%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(251, 245, 234, 0.62) 0%,
+      rgba(251, 245, 234, 0.34) 26%,
+      rgba(28, 20, 14, 0.1) 62%,
+      rgba(16, 10, 7, 0.44) 100%
+    );
+}
+
+.home-inner {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 720px;
+  padding: clamp(14px, 3.5vw, 28px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(6px, 1.6vw, 14px);
+}
+
+.home-top {
+  align-self: stretch;
+  display: flex;
+  justify-content: flex-start;
+}
+
+/*
+ * 主页品牌与标题：参考图为**深炭棕**字，且**不用**发光阴影。
+ * ⚠️ 仅作用于主页（`.home` 作用域 / `.home-title`），内页品牌样式不受影响。
+ */
+.home .brand-icon {
+  color: var(--stove-clay);
+}
+
+.home .brand-name {
+  color: var(--stove-ink);
+}
+
+.home-title {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  font-size: clamp(1.2rem, 4.5vw, 1.85rem);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--stove-ink);
+  text-shadow: none;
+}
+
+.home-title-rule {
+  width: 46px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--stove-fire-soft), transparent);
+}
+
+/* ------------------------------------------------------------
+ * 二、灶台圆环
+ * ------------------------------------------------------------ */
+
+.stove {
+  position: relative;
+  /* 同时受宽与高约束：窄屏、矮屏都不会把圆环挤出可视区 */
+  width: min(92vw, 520px, 62vh);
+  aspect-ratio: 1 / 1;
+  margin-top: clamp(2px, 1vw, 10px);
+  animation: stove-in 640ms cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+
+/* 每段扇形 = 一个铺满灶台的按钮，用 clip-path 限制到本象限 */
+.arc-btn {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  /* ⚠️ 全局 `button { border-radius: 6px }` 会把任何残留底色画成**圆角矩形**，
+     这里清零，杜绝「扇形外侧出现浅灰白圆角矩形」的外观。 */
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--stove-ink);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * ⚠️⚠️ 必须显式覆盖「悬停 / 焦点 / 按下」态的按钮背景
+ *
+ * 原因（层叠特异性）：
+ *   styles.css 的全局规则
+ *     `button:hover:not(:disabled) { background: #f0f0f0 }`  → 特异性 (0,2,1)
+ *   会**压过** `.arc-btn:hover` 的 (0,2,0)（class 数相同，全局那条多一个元素选择器）。
+ *   于是悬停时整个象限被涂成 #f0f0f0（浅灰白），再被 `clip-path` 裁成
+ *   **整块矩形**，看起来就是「扇形外侧多了一个灰白矩形」。
+ *
+ * 修复：用 `.stove` 祖先把特异性提到 (0,3,0)，在四种状态下都稳过全局那条。
+ * 只影响这四个扇形按钮的背景色，不动全局 `button` 样式。
+ */
+.stove .arc-btn,
+.stove .arc-btn:hover,
+.stove .arc-btn:focus,
+.stove .arc-btn:focus-visible,
+.stove .arc-btn:active {
+  background: transparent;
+}
+
+.arc-tl {
+  clip-path: polygon(0 0, 50% 0, 50% 50%, 0 50%);
+}
+.arc-tr {
+  clip-path: polygon(50% 0, 100% 0, 100% 50%, 50% 50%);
+}
+.arc-bl {
+  clip-path: polygon(0 50%, 50% 50%, 50% 100%, 0 100%);
+}
+.arc-br {
+  clip-path: polygon(50% 50%, 100% 50%, 100% 100%, 50% 100%);
+}
+
+/* 扇形本体 */
+.arc-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transition: transform 180ms ease;
+}
+
+.arc-path {
+  fill: var(--stove-enamel);
+  stroke: var(--stove-edge);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 7px 12px rgba(20, 13, 8, 0.34));
+  transition: fill 180ms ease, stroke 180ms ease;
+}
+
+/* 标签落在环带中径上（位置由 HomePage 计算后经 CSS 变量传入） */
+.arc-inner {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 40%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  text-align: center;
+  /* 点击一律落到按钮本身，标签不参与命中 */
+  pointer-events: none;
+  transition: transform 180ms ease;
+}
+
+.arc-tl .arc-inner {
+  left: var(--arc-near);
+  top: var(--arc-near);
+}
+.arc-tr .arc-inner {
+  left: var(--arc-far);
+  top: var(--arc-near);
+}
+.arc-bl .arc-inner {
+  left: var(--arc-near);
+  top: var(--arc-far);
+}
+.arc-br .arc-inner {
+  left: var(--arc-far);
+  top: var(--arc-far);
+}
+
+.arc-icon {
+  width: clamp(20px, 6.2vw, 30px);
+  height: auto;
+  color: var(--stove-clay);
+  transition: color 180ms ease;
+}
+
+.arc-label {
+  font-size: clamp(0.8rem, 2.8vw, 1rem);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+
+.arc-hint {
+  font-size: clamp(0.62rem, 2vw, 0.74rem);
+  color: #8b7a66;
+  line-height: 1.2;
+}
+
+/* 进场：四段轻微错开 */
+.arc-svg {
+  animation: arc-in 460ms ease-out both;
+}
+.arc-tl .arc-svg {
+  animation-delay: 60ms;
+}
+.arc-tr .arc-svg {
+  animation-delay: 120ms;
+}
+.arc-br .arc-svg {
+  animation-delay: 180ms;
+}
+.arc-bl .arc-svg {
+  animation-delay: 240ms;
+}
+
+/* 悬停：轻抬 + 暖色描边（仅在有 hover 的设备上生效）*/
+@media (hover: hover) {
+  .arc-btn:hover .arc-svg {
+    transform: translateY(-3px);
+  }
+  .arc-btn:hover .arc-path {
+    fill: #fffaf0;
+    stroke: var(--stove-fire);
+  }
+  .arc-btn:hover .arc-icon {
+    color: var(--stove-fire);
+  }
+  .arc-btn:hover .arc-inner {
+    transform: translate(-50%, calc(-50% - 3px));
+  }
+}
+
+/* 按压回馈 */
+.arc-btn:active .arc-svg {
+  transform: translateY(-1px) scale(0.985);
+}
+
+/*
+ * 键盘焦点：clip-path 会裁掉 outline，因此
+ * 用「扇形描边变暖橙加粗」作为**清晰的焦点指示**。
+ */
+.arc-btn:focus-visible {
+  outline: none;
+}
+.arc-btn:focus-visible .arc-path {
+  stroke: var(--stove-fire-soft);
+  stroke-width: 5;
+}
+.arc-btn:focus-visible .arc-icon,
+.arc-btn:focus-visible .arc-label {
+  color: var(--stove-fire);
+}
+
+/* ------------------------------------------------------------
+ * 三、中央铸铁灶眼
+ * ------------------------------------------------------------ */
+
+.stove-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44%;
+  height: 44%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--stove-cream-text);
+  background: radial-gradient(
+    circle at 50% 36%,
+    var(--stove-iron-2) 0%,
+    var(--stove-iron) 54%,
+    #1b1714 100%
+  );
+  box-shadow:
+    0 12px 28px rgba(10, 7, 4, 0.58),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transition: box-shadow 200ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 细的暖橙环 */
+.stove-center::before {
+  content: '';
+  position: absolute;
+  inset: 7%;
+  border-radius: 50%;
+  border: 2.5px solid rgba(226, 112, 31, 0.92);
+  box-shadow: 0 0 12px rgba(226, 112, 31, 0.34);
+  pointer-events: none;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+/* 灶眼火光：轻微呼吸 */
+.stove-glow {
+  position: absolute;
+  inset: 13%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 154, 77, 0.30) 0%,
+    rgba(255, 120, 40, 0) 72%
+  );
+  animation: ember 4.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.stove-center-icon {
+  width: clamp(28px, 9vw, 44px);
+  height: auto;
+  color: #f6efe3;
+}
+
+.stove-center-title {
+  font-size: clamp(1rem, 4.2vw, 1.5rem);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.15;
+}
+
+.stove-center-sub {
+  font-size: clamp(0.6rem, 2.2vw, 0.78rem);
+  color: #d6c6b0;
+  letter-spacing: 0.08em;
+}
+
+@media (hover: hover) {
+  .stove-center:hover {
+    box-shadow:
+      0 14px 32px rgba(10, 7, 4, 0.62),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+  .stove-center:hover::before {
+    border-color: var(--stove-fire-soft);
+    box-shadow: 0 0 20px rgba(255, 140, 60, 0.5);
+  }
+}
+
+.stove-center:active {
+  transform: translate(-50%, -50%) scale(0.984);
+}
+
+.stove-center:focus-visible {
+  outline: 3px solid var(--stove-fire-soft);
+  outline-offset: 4px;
+}
+
+/* ------------------------------------------------------------
+ * 四、动画
+ * ------------------------------------------------------------ */
+
+@keyframes stove-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes arc-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ember {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+/*
+ * 尊重 prefers-reduced-motion：关闭所有动画与位移过渡，
+ * 保留完整的静态外观与焦点/按压的颜色反馈。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .stove,
+  .arc-svg,
+  .stove-glow {
+    animation: none !important;
+  }
+  .arc-svg,
+  .arc-inner,
+  .arc-path,
+  .arc-icon,
+  .stove-center,
+  .stove-center::before {
+    transition: none !important;
+  }
+  .arc-btn:hover .arc-svg,
+  .arc-btn:active .arc-svg,
+  .arc-btn:hover .arc-inner {
+    transform: none;
+  }
+  .arc-tl .arc-inner,
+  .arc-tr .arc-inner,
+  .arc-bl .arc-inner,
+  .arc-br .arc-inner {
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* ------------------------------------------------------------
+ * 五、窄屏收敛（360 / 390px 仍保持「中央主按钮 + 四周环形入口」）
+ * ------------------------------------------------------------ */
+
+@media (max-width: 430px) {
+  .home-inner {
+    gap: 4px;
+    padding: 12px;
+  }
+
+  .home-title {
+    font-size: 1.1rem;
+  }
+
+  /* 次要提示在窄屏隐藏，保证「更多功能」主标签清晰 */
+  .arc-hint {
+    display: none;
+  }
+
+  .arc-inner {
+    width: 46%;
+    gap: 2px;
+  }
+
+  .stove {
+    width: min(94vw, 62vh);
+  }
+}
+
+/* 矮屏（横屏手机）：进一步让位给高度 */
+@media (max-height: 520px) {
+  .stove {
+    width: min(92vw, 460px, 70vh);
+  }
+  .home-title {
+    font-size: 1rem;
+  }
+}
+
+/* ------------------------------------------------------------
+ * 六、内页紧凑导航
+ * ------------------------------------------------------------ */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.brand-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+
+.brand-button:hover {
+  border-color: var(--border);
+}
+
+.brand-button:focus-visible {
+  outline: 2px solid var(--stove-clay);
+  outline-offset: 2px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.brand-icon {
+  width: 22px;
+  height: auto;
+  color: var(--stove-clay);
+}
+
+.brand-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--stove-ink);
+}
+
+.brand-compact .brand-icon {
+  width: 19px;
+}
+
+.brand-compact .brand-name {
+  font-size: 0.95rem;
+}
+
+/* 内页导航：窄屏可横向滚动，避免换行挤压 */
+.app-nav {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.app-nav .nav-item {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------
+ * 七、「更多功能」面板
+ * ------------------------------------------------------------ */
+
+/*
+ * ⚠️ 层级修复（v0.2.2 修复轮）
+ *
+ * 症状：主页打开「更多功能」后，标题与圆环仍画在白色面板之上，
+ *       盖住「食材库」按钮下半部，导致点不到。
+ *
+ * 原因：`.modal-backdrop` 是 `position: fixed` 但**没有 z-index**，
+ *       而主页的 `.home-inner` 有 `z-index: 1` —— 有正 z-index 的元素
+ *       会盖过没有 z-index 的定位元素，于是标题跑到遮罩前面。
+ *
+ * 修复：给本面板的遮罩一个**明确的覆盖层**（远高于主页内容）。
+ *       `.home-inner` 内部即使有更大的 z-index（如中央按钮 z-index: 3），
+ *       也被限制在 `.home-inner` 这个层叠上下文内，无法越过这里。
+ *
+ * ⚠️ 只加在本面板上（`.more-backdrop`），**不改动其它业务对话框**。
+ */
+.more-backdrop {
+  z-index: 1000;
+}
+
+.more-modal {
+  max-width: 420px;
+  /* 面板自身也建立一个层叠上下文，确保内部元素不会溢出到遮罩之外 */
+  position: relative;
+  z-index: 1;
+}
+
+.tool-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.tool-item:hover {
+  border-color: var(--stove-edge);
+  background: #fffaf2;
+}
+
+.tool-item:focus-visible {
+  outline: 2px solid var(--stove-clay);
+  outline-offset: 2px;
+}
+
+.tool-icon {
+  flex: 0 0 auto;
+  width: 26px;
+  height: auto;
+  color: var(--stove-clay);
+}
+
+.tool-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-name {
+  font-weight: 600;
+}
+
+.tool-desc {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
