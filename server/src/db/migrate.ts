@@ -51,22 +51,38 @@ if (typeof rawPath !== 'string' || rawPath.trim().length === 0) {
 /**
  * 解析为明确的绝对路径。
  *
- * ⚠️ 必须在这里先 `resolve` 一次：`assertSafeDbPath` 内部用
- *    `resolve(serverRoot, rawPath)` 解析，而**相对路径会基于 serverRoot**；
- *    但 `db/index.ts` 实际用的是 `resolve(rawPath)`（基于 `process.cwd()`）。
- *    两者基准不同 —— 先在此统一为绝对路径，可消除该分歧。
+ * ⚠️ 基准必须是 **`process.cwd()`**，与 `db/index.ts` L25 的
+ *    `resolve(process.env.HOME_CHEF_DB_PATH)` **完全一致**。
+ *
+ *    这样「本文件校验的路径」与「数据库模块实际打开的路径」
+ *    在**同一基准**下解析，杜绝相对路径导致的两者分歧。
+ *    （`assertSafeDbPath` 内部会再次 `resolve(serverRoot, ...)`，
+ *      但因为这里传入的已是绝对路径，`resolve` 会原样返回它，
+ *      因此两次解析结果必然相同。）
  */
 const absolutePath = resolve(rawPath)
 
 /** 校验通过后的最终路径 */
 let databasePath = ''
 
+/*
+ * ⚠️ 迁移真实库的唯一入口：必须显式设置 HOME_CHEF_ALLOW_REAL_DB=1。
+ *
+ * 设计要点（**不得放宽**）：
+ *   - 默认关闭：未设置时行为与之前**完全一致**（拒绝真实库）
+ *   - 只放行**真实库本身**，不放行 server/data/ 下的其他文件
+ *   - 不提供"任意路径绕过"能力 —— 开关与路径必须**同时**满足
+ *   - 这是给 `db:migrate` 专用的一次性授权，harness / verify 脚本
+ *     一律走默认值，行为不变
+ */
+const allowRealDb = process.env.HOME_CHEF_ALLOW_REAL_DB === '1'
+
 try {
   // 复用既有安全校验：拒绝指向真实库及其 -wal / -shm
   // ⚠️ 从同目录模块导入（而非 harness）——harness 位于 rootDir 之外，
   //    从 src/ 内导入它会触发 TS6059
   const { assertSafeDbPath } = await import('./safe-db-path.js')
-  assertSafeDbPath(absolutePath, serverRoot)
+  assertSafeDbPath(absolutePath, serverRoot, { allowRealDb })
   databasePath = absolutePath
 } catch (e) {
   console.error(
@@ -77,16 +93,20 @@ try {
   process.exit(1)
 }
 
-// ⚠️ 额外兜底：即便上面的校验被改动，也绝不允许落到 server/data/ 下
+// ⚠️ 额外兜底：即便上面的校验被改动，也绝不允许落到 server/data/ 下 ——
+//    **唯一例外**是已显式授权的真实库本身
 const forbiddenReal = resolve(serverRoot, 'data').toLowerCase()
-if (
+const realDbPath = resolve(serverRoot, 'data', 'homechef.db').toLowerCase()
+const insideServerData =
   databasePath.toLowerCase() === forbiddenReal ||
   databasePath.toLowerCase().startsWith(`${forbiddenReal}\\`) ||
   databasePath.toLowerCase().startsWith(`${forbiddenReal}/`)
-) {
+
+if (insideServerData && !(allowRealDb && databasePath.toLowerCase() === realDbPath)) {
   console.error(
     `[migrate] 拒绝执行：解析后的路径位于受保护的 server/data/ 目录内。\n` +
-      `          路径：${databasePath}`,
+      `          路径：${databasePath}\n` +
+      `          （仅当 HOME_CHEF_ALLOW_REAL_DB=1 且目标恰为 homechef.db 时才放行）`,
   )
   process.exit(1)
 }
