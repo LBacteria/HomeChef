@@ -58,3 +58,31 @@ Thumbs.db
 
 # TypeScript 增量编译缓存
 *.tsbuildinfo
+
+# ============================================================
+# 受保护的一次性诊断脚本（保持**未跟踪**：不得修改、移动、暂存或提交）
+#
+# ⚠️⚠️ 这里**逐条列出精确路径，刻意不使用 `server/_*.ts` 这类通配符**：
+#      server/ 下另有 10 个**已正常跟踪**的 `_*.ts` 项目文件
+#      （如 _diag-cross.ts、_tz-probe.ts、_review-cats.ts、_check-v013.ts、
+#        seed/_check-cats.ts、seed/_remap-categories.ts 等），
+#      通配符会把它们一并"标成垃圾"，一旦将来被 git rm 后重新加入
+#      就会被静默忽略。
+#
+# ⚠️ 其中 `_rebuild-cleanup.ts` 会 `delete from` 清空真实库的库存与食材定义，
+#     误提交或误运行后果严重。
+# ============================================================
+server/_backup-db.ts
+server/_backup-prerebuild.ts
+server/_crosscheck-migration.ts
+server/_diag-500.ts
+server/_inspect-seed-tables.ts
+server/_readonly-migration-check.ts
+server/_rebuild-cleanup.ts
+server/_release-facts.ts
+server/_verify-rebuild.ts
+server/seed/_analyze-data.ts
+server/seed/_audit-shelf.ts
+server/seed/_audit-units.ts
+server/seed/_list-aliases.ts
+server/seed/_verify-alias-update.ts
