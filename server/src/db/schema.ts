@@ -860,6 +860,21 @@ export const cookingSession = sqliteTable(
     /** active | cooking | awaiting_settlement | settled | abandoned */
     status: text('status').notNull().default('active'),
 
+    /**
+     * 自定义记录名称（v0.2.1.1）。
+     *
+     * - `NULL`  = 使用**默认名称**：由 `started_at`（无法解析时回退
+     *   `created_at`）在客户端按**本地时区**渲染为 `YYYY-MM-DD-HH:mm`，
+     *   例如 `2026-10-15-21:30`。
+     * - 非空    = 用户自定义名称，列表与详情**一致显示**。
+     *
+     * ⚠️ 空串 / 纯空白**不写入本列**（由 Service 层拒绝）；
+     *    恢复默认名请写 `NULL`，与空白输入语义**不同**。
+     * ⚠️ 改名**不影响 `started_at`**，因此不改变列表排序。
+     * ⚠️ 历史行保持 `NULL`，不做批量回填（迁移 0011 不写数据）。
+     */
+    name: text('name'),
+
     /** 会话内菜品所依据的菜谱内容版本（单调递增） */
     recipe_revision: integer('recipe_revision').notNull().default(0),
 

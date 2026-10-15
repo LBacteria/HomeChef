@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 
 /**
  * 删除确认对话框。
@@ -8,8 +9,12 @@ import { useState } from 'react'
  */
 
 interface Props {
-  /** 待删除对象的名称（用于确认文案） */
-  ingredientName: string
+  /**
+   * 待删除对象的名称（用于默认确认文案）。
+   *
+   * ⚠️ 传入 `description` 时可省略（此时正文由 `description` 决定）。
+   */
+  ingredientName?: string
   /**
    * 对话框标题。
    *
@@ -17,6 +22,13 @@ interface Props {
    *    菜谱删除等其它场景可传入自己的标题。
    */
   title?: string
+  /**
+   * 自定义正文（替换默认的「确定要删除「X」吗？」）。
+   *
+   * 用于需要额外说明影响范围的场景，例如批量删除烹饪记录时
+   * 必须写清「只清理记录、不恢复库存」。
+   */
+  description?: ReactNode
   onConfirm: () => Promise<void>
   onCancel: () => void
 }
@@ -24,6 +36,7 @@ interface Props {
 export default function ConfirmDeleteDialog({
   ingredientName,
   title = '删除食材',
+  description,
   onConfirm,
   onCancel,
 }: Props) {
@@ -47,9 +60,13 @@ export default function ConfirmDeleteDialog({
       <div className="modal">
         <h2>{title}</h2>
 
-        <p>
-          确定要删除「<strong>{ingredientName}</strong>」吗？
-        </p>
+        {description !== undefined ? (
+          <div className="modal-description">{description}</div>
+        ) : (
+          <p>
+            确定要删除「<strong>{ingredientName}</strong>」吗？
+          </p>
+        )}
 
         {error && <p className="form-error">{error}</p>}
 

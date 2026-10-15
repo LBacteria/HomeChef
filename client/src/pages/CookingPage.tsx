@@ -4,18 +4,21 @@ import {
   abandonSession,
   addDish,
   createSession,
+  deleteSessions,
   deleteSkip,
   getSession,
   listSessions,
   listSkips,
   previewSettlement,
   removeDish,
+  renameSession,
   saveSkips,
   settleSession,
   updateDishProgress,
   updateDishServings,
 } from '../api/cooking'
 import { listRecipes, getRecipe } from '../api/recipes'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog'
 import { ApiError } from '../types/api'
 import type {
   CookingSessionDetail,
@@ -71,12 +74,79 @@ const OUTCOME_LABEL: Record<string, string> = {
   insufficient: '库存不足',
 }
 
+/**
+ * 名称长度上限（v0.2.1.1）。
+ *
+ * ⚠️ **必须与后端保持一致**：后端为
+ *    `cookingService.COOKING_SESSION_NAME_MAX_LENGTH`（同为 60），
+ *    API 层 JSON Schema 的 `maxLength` 也是 60。改一处就要同步三处。
+ */
+const NAME_MAX_LENGTH = 60
+
+/** 默认名称的渲染格式：`YYYY-MM-DD-HH:mm`（**用户本地时区**） */
+function formatDefaultName(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `-${pad(d.getHours())}:${pad(d.getMinutes())}`
+  )
+}
+
+/**
+ * 记录在界面上显示的**最终名称**。
+ *
+ * - 已有自定义名称（`name !== null`）→ 直接显示（列表与详情一致）。
+ * - 否则显示**默认名**：优先 `started_at`，无法解析时回退 `created_at`
+ *   （均在本地时区）；两者都不可解析时回退 `#id`，**绝不显示空白**。
+ *
+ * ⚠️ 纯展示派生：不写库、不批量改写历史记录。
+ */
+function displaySessionName(s: {
+  id: number
+  name: string | null
+  started_at: string
+  created_at: string
+}): string {
+  if (s.name !== null && s.name.length > 0) return s.name
+  return formatDefaultName(s.started_at) || formatDefaultName(s.created_at) || `#${s.id}`
+}
+
 export default function CookingPage() {
   /* ---------- 列表 ---------- */
   const [sessions, setSessions] = useState<CookingSessionSummary[]>([])
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+
+  /* ---------- 多选与批量删除（v0.2.1.1）---------- */
+  /** 已勾选的会话 id（选择范围＝当前已加载的列表） */
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  /** 全选框需要 ref 才能设置 indeterminate（半选态） */
+  const selectAllRef = useRef<HTMLInputElement | null>(null)
+
+  /* ---------- 行内改名（v0.2.1.1）---------- */
+  /** 正在编辑的会话 id；null = 无 */
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editingValue, setEditingValue] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  /**
+   * 改名的**同步互斥锁**。
+   *
+   * ⚠️ 必须是 ref：React 的 `setState` 是异步的，只靠 `renameBusy` 挡不住
+   *    「Enter 连按」「回车与保存按钮同一事件循环内先后触发」这类重复提交。
+   *    与结算的 `settleLock` 同一套做法。
+   */
+  const renameLock = useRef(false)
+
+  /**
+   * 列表请求序号：丢弃**迟到响应**，避免旧请求覆盖新状态
+   * （与详情视图的 `detailSeq` 同一套做法）。
+   */
+  const listSeq = useRef(0)
 
   /* ---------- 详情 ---------- */
   const [detail, setDetail] = useState<CookingSessionDetail | null>(null)
@@ -128,15 +198,20 @@ export default function CookingPage() {
    * 列表加载
    * ============================================================ */
   const fetchSessions = useCallback(async () => {
+    const seq = ++listSeq.current
     setListLoading(true)
     setListError(null)
     try {
-      setSessions(await listSessions())
+      const data = await listSessions()
+      // ⚠️ 迟到响应直接丢弃：否则旧结果会覆盖刚改名 / 刚删除后的新状态
+      if (seq !== listSeq.current) return
+      setSessions(data)
     } catch (e) {
+      if (seq !== listSeq.current) return
       setSessions([])
       setListError(e instanceof ApiError ? e.message : '加载烹饪会话失败，请稍后重试。')
     } finally {
-      setListLoading(false)
+      if (seq === listSeq.current) setListLoading(false)
     }
   }, [])
 
@@ -149,6 +224,141 @@ export default function CookingPage() {
       detailSeq.current++
     }
   }, [])
+
+  /* ============================================================
+   * 多选与批量删除（v0.2.1.1）
+   * ------------------------------------------------------------
+   * ⚠️ 接口 `GET /api/cooking/sessions` 当前**不分页**，
+   *    因此「全选」的作用范围就是当前加载的全部记录。
+   *    若将来引入分页或筛选，必须把选择范围限定在**当前可见集合**内，
+   *    不得让「全选」跨页选中不可见记录。
+   * ============================================================ */
+  const selectableIds = sessions.map((s) => s.id)
+  const selectedInView = selectedIds.filter((id) => selectableIds.includes(id))
+  const selectedCount = selectedInView.length
+  const allSelected = selectableIds.length > 0 && selectedCount === selectableIds.length
+  const someSelected = selectedCount > 0 && !allSelected
+
+  /**
+   * 行级交互锁定：删除确认弹窗已打开，或改名正在提交。
+   *
+   * ⚠️ 锁定期间禁止「打开详情 / 勾选 / 开始编辑」，
+   *    避免后台列表刷新或快捷键造成**重复提交**与**误开记录**。
+   */
+  const rowLocked = deleteOpen || renameBusy
+
+  // 半选态只能通过 DOM 属性设置，原生 checkbox 没有对应的 JSX 属性
+  useEffect(() => {
+    if (selectAllRef.current !== null) {
+      selectAllRef.current.indeterminate = someSelected
+    }
+  }, [someSelected])
+
+  // ⚠️ 列表刷新后丢弃已不存在的 id，避免「已选 N 条」包含已被删除的记录
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const next = prev.filter((id) => sessions.some((s) => s.id === id))
+      return next.length === prev.length ? prev : next
+    })
+  }, [sessions])
+
+  function toggleOne(id: number, checked: boolean) {
+    setSelectedIds((prev) =>
+      checked ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter((x) => x !== id),
+    )
+  }
+
+  function toggleAll(checked: boolean) {
+    // 全选/取消全选只作用于当前列表；取消全选即清空选择
+    setSelectedIds(checked ? [...selectableIds] : [])
+  }
+
+  /**
+   * 删除所选记录（单条与批量走**同一条**后端路径）。
+   *
+   * ⚠️ 失败时**必须让异常抛出**：由 ConfirmDeleteDialog 捕获并显示错误，
+   *    且**不清除**选择状态，用户可以处理后重试 —— 绝不假装成功。
+   */
+  async function handleDeleteSelected() {
+    const ids = [...selectedInView]
+    if (ids.length === 0) return
+
+    await deleteSessions(ids)
+
+    setDeleteOpen(false)
+    // 只移除已确认删除的 id；其余选择状态保留
+    setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)))
+    await fetchSessions()
+    setNotice(`已删除 ${ids.length} 条烹饪记录（仅清理记录，库存未变动）。`)
+  }
+
+  /* ============================================================
+   * 行内改名（v0.2.1.1）
+   * ============================================================ */
+
+  /** 进入行内编辑（预填当前显示的名称作为编辑起点） */
+  function startRename(s: CookingSessionSummary) {
+    if (renameLock.current || deleteOpen) return
+    setEditingId(s.id)
+    setEditingValue(s.name ?? displaySessionName(s))
+    setRenameError(null)
+  }
+
+  /** 取消编辑，丢弃未保存输入 */
+  function cancelRename() {
+    if (renameLock.current) return
+    setEditingId(null)
+    setEditingValue('')
+    setRenameError(null)
+  }
+
+  /**
+   * 提交改名。
+   *
+   * @param next `null` = **恢复默认名称**（后端写 NULL）；字符串 = 自定义名称
+   *
+   * ⚠️ `renameLock` 是**同步**互斥：Enter 连按 / 双击 / 「回车 + 点保存」
+   *    同时触发时，只有第一个请求会真正发出。
+   * ⚠️ 失败时**保留用户输入**（不退出编辑态）并就地提示，绝不假装成功。
+   */
+  async function submitRename(sessionId: number, next: string | null) {
+    if (renameLock.current) return
+    renameLock.current = true
+    setRenameBusy(true)
+    setRenameError(null)
+
+    try {
+      await renameSession(sessionId, next)
+      setEditingId(null)
+      setEditingValue('')
+      await fetchSessions()
+      setNotice(next === null ? '已恢复默认名称。' : `已重命名为「${next}」。`)
+    } catch (e) {
+      setRenameError(e instanceof ApiError ? e.message : '重命名失败，请稍后重试。')
+    } finally {
+      renameLock.current = false
+      setRenameBusy(false)
+    }
+  }
+
+  /**
+   * 行内编辑的「保存」。
+   *
+   * ⚠️ 空 / 纯空白在**前端就拦下**并提示 —— 它与「恢复默认」（传 `null`）
+   *    是两种不同意图，不能靠后端猜测。
+   */
+  async function handleRenameSave(sessionId: number) {
+    const trimmed = editingValue.trim()
+    if (trimmed.length === 0) {
+      setRenameError('名称不能为空或纯空白。可点「恢复默认」使用默认名称。')
+      return
+    }
+    if (trimmed.length > NAME_MAX_LENGTH) {
+      setRenameError(`名称过长：最多 ${NAME_MAX_LENGTH} 个字符。`)
+      return
+    }
+    await submitRename(sessionId, trimmed)
+  }
 
   /* ============================================================
    * 详情加载
@@ -167,6 +377,10 @@ export default function CookingPage() {
     setPreview(null)
     setSettleResult(null)
     setExpandedDishId(null)
+    // 进入详情前退出行内改名，避免编辑态残留在列表上
+    setEditingId(null)
+    setEditingValue('')
+    setRenameError(null)
 
     try {
       const data = await getSession(id)
@@ -194,6 +408,10 @@ export default function CookingPage() {
     setSettleResult(null)
     setActionError(null)
     setNotice(null)
+    // 回到列表时一并清理行内改名状态
+    setEditingId(null)
+    setEditingValue('')
+    setRenameError(null)
     void fetchSessions()
   }
 
@@ -562,21 +780,185 @@ export default function CookingPage() {
           <p className="empty-state">还没有烹饪会话。点击右上角「新建烹饪会话」开始。</p>
         )}
 
+        {notice !== null && (
+          <p className="recipe-notice" role="status">
+            {notice}
+          </p>
+        )}
+
         {!listLoading && listError === null && sessions.length > 0 && (
-          <ul className="cooking-session-list">
-            {sessions.map((s) => (
-              <li key={s.id} className="cooking-session-item">
-                <button type="button" className="cooking-session-open" onClick={() => void openDetail(s.id)}>
-                  <span className="cooking-session-id">会话 #{s.id}</span>
-                  <span className={`cooking-status cooking-status-${s.status}`}>
-                    {STATUS_LABEL[s.status]}
+          <>
+            <div className="cooking-session-toolbar">
+              <label className="cooking-select-all">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allSelected}
+                  disabled={rowLocked}
+                  onChange={(e) => toggleAll(e.target.checked)}
+                />
+                <span>全选</span>
+              </label>
+
+              {selectedCount > 0 && (
+                <>
+                  <span className="cooking-selected-count" role="status">
+                    已选 {selectedCount} 条
                   </span>
-                  <span className="cooking-session-meta">{s.dish_count} 道菜</span>
-                </button>
-                <span className="cooking-session-time">{formatTime(s.created_at)}</span>
-              </li>
-            ))}
-          </ul>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={renameBusy}
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    删除选中
+                  </button>
+                </>
+              )}
+            </div>
+
+            <ul className="cooking-session-list">
+              {sessions.map((s) => {
+                const checked = selectedIds.includes(s.id)
+                const editing = editingId === s.id
+                return (
+                  <li
+                    key={s.id}
+                    className={`cooking-session-item${checked ? ' is-selected' : ''}`}
+                  >
+                    {/* ⚠️ 复选框、行、铅笔同为**并列兄弟节点**，不嵌套在按钮内，
+                        因此勾选 / 改名都不会误触「打开详情」 */}
+                    <input
+                      type="checkbox"
+                      className="cooking-session-checkbox"
+                      checked={checked}
+                      disabled={rowLocked}
+                      onChange={(e) => toggleOne(s.id, e.target.checked)}
+                      aria-label={`选择记录 ${displaySessionName(s)}`}
+                    />
+
+                    {editing ? (
+                      <div className="cooking-session-rename">
+                        <input
+                          type="text"
+                          className="cooking-rename-input"
+                          value={editingValue}
+                          maxLength={NAME_MAX_LENGTH}
+                          disabled={renameBusy}
+                          /* eslint-disable-next-line jsx-a11y/no-autofocus */
+                          autoFocus
+                          aria-label="记录名称"
+                          onChange={(e) => setEditingValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            /*
+                             * ⚠️⚠️ 输入法（中文 / 日文等）**组合输入期间必须完全让路**
+                             *
+                             * 原因：
+                             *   - 拼音选词确认会发送 **Enter**。若当成「保存」，
+                             *     会把**未完成的候选**（或半截拼音）存成名称。
+                             *   - **Esc** 可能只是关闭候选框，并不代表用户想取消编辑。
+                             *
+                             * 判据（任一成立即视为组合中）：
+                             *   ① `nativeEvent.isComposing`（标准属性）
+                             *   ② `keyCode === 229`（部分浏览器 / 输入法在
+                             *      `compositionend` 之前给出的兼容值）
+                             *
+                             * 组合期间**直接返回**：不 `preventDefault`、
+                             * 不提交、不取消，让输入法自己处理这次按键。
+                             */
+                            const native = e.nativeEvent
+                            if (native.isComposing || native.keyCode === 229) return
+
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              void handleRenameSave(s.id)
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault()
+                              cancelRename()
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={renameBusy}
+                          onClick={() => void handleRenameSave(s.id)}
+                        >
+                          {renameBusy ? '保存中…' : '保存'}
+                        </button>
+                        <button type="button" disabled={renameBusy} onClick={cancelRename}>
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          disabled={renameBusy}
+                          onClick={() => void submitRename(s.id, null)}
+                        >
+                          恢复默认
+                        </button>
+                        {renameError !== null && (
+                          <span className="field-error" role="alert">
+                            {renameError}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="cooking-session-open"
+                          disabled={rowLocked}
+                          onClick={() => void openDetail(s.id)}
+                        >
+                          <span className="cooking-session-name">
+                            {displaySessionName(s)}
+                          </span>
+                          <span className={`cooking-status cooking-status-${s.status}`}>
+                            {STATUS_LABEL[s.status]}
+                          </span>
+                          <span className="cooking-session-meta">
+                            #{s.id} · {s.dish_count} 道菜
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="cooking-session-rename-btn"
+                          disabled={rowLocked}
+                          title="重命名"
+                          aria-label={`重命名记录 ${displaySessionName(s)}`}
+                          onClick={() => startRename(s)}
+                        >
+                          ✏️
+                        </button>
+                      </>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </>
+        )}
+
+        {deleteOpen && (
+          <ConfirmDeleteDialog
+            title="删除烹饪记录"
+            description={
+              <>
+                <p>
+                  将删除选中的 <strong>{selectedCount}</strong> 条烹饪记录，并一并清理
+                  其菜品、跳过确认与结算明细。
+                </p>
+                <p>
+                  <strong>
+                    本操作只清理历史记录：不会恢复库存，也不会撤销已扣减的数量。
+                  </strong>
+                </p>
+                <p>未选中的记录、菜谱与食材均不受影响。此操作不可撤销。</p>
+              </>
+            }
+            onConfirm={handleDeleteSelected}
+            onCancel={() => setDeleteOpen(false)}
+          />
         )}
       </section>
     )
@@ -588,7 +970,7 @@ export default function CookingPage() {
   return (
     <section className="cooking-page">
       <div className="section-header">
-        <h2>烹饪会话 #{detailId ?? ''}</h2>
+        <h2>{detail !== null ? displaySessionName(detail) : `烹饪会话 #${detailId ?? ''}`}</h2>
         <button type="button" onClick={backToList}>
           ← 返回列表
         </button>

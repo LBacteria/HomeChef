@@ -466,11 +466,28 @@ export type SettlementOutcome =
 export interface CookingSessionSummary {
   id: number
   status: CookingSessionStatus
+  /**
+   * 自定义名称（v0.2.1.1）。
+   *
+   * `null` = 未自定义 → 前端按 `started_at`（无法解析时回退 `created_at`）
+   * 在**本地时区**渲染默认名 `YYYY-MM-DD-HH:mm`，例如 `2026-10-15-21:30`。
+   */
+  name: string | null
   recipe_revision: number
   started_at: string
   dish_count: number
   created_at: string
   updated_at: string
+}
+
+/**
+ * 批量删除结果（POST /api/cooking/sessions/batch-delete）。
+ *
+ * ⚠️ 只有**整批成功**才会返回本结构。任一 id 不存在时后端返回 404
+ *    并**不删除任何行**，因此**不存在「部分成功」**状态。
+ */
+export interface CookingSessionsDeleteResult {
+  deleted_ids: number[]
 }
 
 /** 会话中的一道菜（GET /api/cooking/sessions/:id 的 dishes[]） */
@@ -494,6 +511,8 @@ export interface CookingDishDetail {
 export interface CookingSessionDetail {
   id: number
   status: CookingSessionStatus
+  /** 自定义名称；`null` = 使用默认名（同 CookingSessionSummary.name） */
+  name: string | null
   recipe_revision: number
   started_at: string
   finished_at: string | null

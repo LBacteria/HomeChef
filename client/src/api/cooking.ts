@@ -1,6 +1,7 @@
 import { request } from './definitions'
 import type {
   CookingSessionDetail,
+  CookingSessionsDeleteResult,
   CookingSessionSummary,
   CookingSkipRecord,
   SettlementPreview,
@@ -24,6 +25,43 @@ import type {
 /** 列出全部烹饪会话 */
 export function listSessions(): Promise<CookingSessionSummary[]> {
   return request<CookingSessionSummary[]>('/cooking/sessions')
+}
+
+/**
+ * 批量删除烹饪记录（v0.2.1.1）。
+ *
+ * ⚠️ 单条选中也走**这一条**路径 —— 后端不提供单独的删除接口。
+ * ⚠️ 语义是「清理历史记录」：**不恢复库存**、也不撤销已扣减的数量。
+ * ⚠️ 后端**全有或全无**：任一 id 不存在即整批 404，不会部分删除。
+ * ⚠️ 失败会抛错；调用方**不得**在失败时清除用户的选择状态。
+ */
+export function deleteSessions(
+  sessionIds: number[],
+): Promise<CookingSessionsDeleteResult> {
+  return request<CookingSessionsDeleteResult>('/cooking/sessions/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ session_ids: sessionIds }),
+  })
+}
+
+/**
+ * 设置或清除烹饪记录的自定义名称（v0.2.1.1）。
+ *
+ * @param name 字符串 = 自定义名称（后端 `trim` 后保存）；
+ *             `null` = **恢复默认名称**（与「空白输入」语义不同）。
+ *
+ * ⚠️ 后端会拒绝「空串 / 纯空白 / 超长」的输入；前端应做同样的前置校验，
+ *    但**不得**把后端的拒绝当成成功。
+ * ⚠️ 改名**不改变 `started_at`**，因此不会改变列表排序。
+ */
+export function renameSession(
+  sessionId: number,
+  name: string | null,
+): Promise<CookingSessionSummary> {
+  return request<CookingSessionSummary>(`/cooking/sessions/${sessionId}/name`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  })
 }
 
 /** 创建烹饪会话（后端置为 active） */

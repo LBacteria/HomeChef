@@ -4,6 +4,7 @@ import {
   abandonSession,
   addDish,
   createSession,
+  deleteSessions,
   deleteSkipConfirmation,
   findStaleDishes,
   getSessionById,
@@ -13,6 +14,7 @@ import {
   saveSkipConfirmations,
   updateDishProgress,
   updateDishServings,
+  updateSessionName,
 } from '../services/cookingService.js'
 import type { SkipConfirmation } from '../services/cookingService.js'
 import { previewSettlement, settleSession } from '../services/settlementService.js'
@@ -111,6 +113,37 @@ const skipsBodySchema = {
   },
 } as const
 
+/** 批量删除烹饪记录（v0.2.1.1） */
+const deleteSessionsBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['session_ids'],
+  properties: {
+    // ⚠️ 至少一个；元素必须是正整数（Service 层还会再校验一次并去重）
+    session_ids: {
+      type: 'array',
+      minItems: 1,
+      items: { type: 'integer', minimum: 1 },
+    },
+  },
+} as const
+
+/** 修改烹饪记录名称（v0.2.1.1） */
+const renameSessionBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name'],
+  properties: {
+    /**
+     * ⚠️ `null` = **恢复默认名称**，明确区别于「空白输入」。
+     * ⚠️ 空串由 `minLength: 1` 直接拒绝；纯空白由 Service 层 trim 后拒绝。
+     * ⚠️ `maxLength` 必须与 Service 的 `COOKING_SESSION_NAME_MAX_LENGTH`
+     *    以及前端输入框的 `maxLength` 保持一致。
+     */
+    name: { type: ['string', 'null'], minLength: 1, maxLength: 60 },
+  },
+} as const
+
 /** 解析路径参数中的 ID；非法则发送 400 响应 */
 function badId(reply: FastifyReply, raw: string): FastifyReply {
   return reply
@@ -132,6 +165,22 @@ export function registerCookingRoutes(app: FastifyInstance): void {
     { schema: { querystring: emptyQuerySchema } },
     async (_request, reply) => {
       return reply.code(200).send(listSessions())
+    },
+  )
+
+  /**
+   * POST /api/cooking/sessions/batch-delete
+   * **批量删除**烹饪记录（单条选中也走这同一条路径）。200 / 400 / 404
+   *
+   * ⚠️ 语义是「清理历史记录」，**不是撤销烹饪**：
+   *    不回补库存、不再次扣减、不修改任何库存数量。
+   * ⚠️ **全有或全无**：任一 id 不存在 → 404，且整批不删除任何行。
+   */
+  app.post<{ Body: { session_ids: number[] } }>(
+    '/api/cooking/sessions/batch-delete',
+    { schema: { body: deleteSessionsBodySchema } },
+    async (request, reply) => {
+      return reply.code(200).send(deleteSessions(request.body.session_ids))
     },
   )
 
@@ -170,6 +219,28 @@ export function registerCookingRoutes(app: FastifyInstance): void {
       if (id === null) return badId(reply, request.params.id)
 
       return reply.code(200).send(abandonSession(id))
+    },
+  )
+
+  /**
+   * PATCH /api/cooking/sessions/:id/name
+   * 设置或清除烹饪记录的自定义名称（v0.2.1.1）。200 / 400 / 404
+   *
+   *   `{ name: "..." }` → 保存自定义名称（后端 trim 后写入）
+   *   `{ name: null }`  → **恢复默认名称**（列写回 NULL）
+   *
+   * ⚠️ 只改名称，**不改 `started_at`**，因此不改变列表排序。
+   * ⚠️ 终态（已结算 / 已放弃）**同样允许**改名 —— 这是给历史记录贴标签，
+   *    不是业务状态变更。
+   */
+  app.patch<{ Params: IdParams; Body: { name: string | null } }>(
+    '/api/cooking/sessions/:id/name',
+    { schema: { body: renameSessionBodySchema } },
+    async (request, reply) => {
+      const id = parsePositiveIntId(request.params.id)
+      if (id === null) return badId(reply, request.params.id)
+
+      return reply.code(200).send(updateSessionName(id, request.body.name))
     },
   )
 

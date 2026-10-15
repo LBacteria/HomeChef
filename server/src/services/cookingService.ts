@@ -1,10 +1,12 @@
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
 import {
   cookingSession,
   cookingSessionDish,
   cookingSessionDishSkip,
+  cookingSettlement,
+  cookingSettlementItem,
   ingredientDefinition,
   recipe,
   recipeIngredient,
@@ -44,6 +46,14 @@ const TERMINAL_STATUSES: readonly CookingSessionStatus[] = ['settled', 'abandone
 
 /** 必需跳过项的原因（参与 `confirmed_revision` 完整性判定） */
 const REQUIRED_SKIP_REASONS: readonly DishSkipReason[] = ['null_quantity', 'unit_mismatch']
+
+/**
+ * 烹饪记录自定义名称的长度上限（v0.2.1.1）。
+ *
+ * ⚠️ **必须与前端保持一致**（前端输入框的 `maxLength`）——
+ *    改这里就要同步改 `client/src/pages/CookingPage.tsx`。
+ */
+export const COOKING_SESSION_NAME_MAX_LENGTH = 60
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -90,6 +100,13 @@ export interface CookingDishDetail {
 export interface CookingSessionDetail {
   id: number
   status: CookingSessionStatus
+  /**
+   * 自定义名称（v0.2.1.1）。
+   *
+   * `null` = 未自定义，由前端按 `started_at`（回退 `created_at`）
+   * 在本地时区渲染默认名 `YYYY-MM-DD-HH:mm`。
+   */
+  name: string | null
   recipe_revision: number
   started_at: string
   finished_at: string | null
@@ -98,6 +115,19 @@ export interface CookingSessionDetail {
   created_at: string
   updated_at: string
   dishes: CookingDishDetail[]
+}
+
+/** 会话列表项（`GET /api/cooking/sessions` 与改名接口的返回）。 */
+export interface CookingSessionSummary {
+  id: number
+  status: CookingSessionStatus
+  /** `null` = 使用默认名（见 `CookingSessionDetail.name`） */
+  name: string | null
+  recipe_revision: number
+  started_at: string
+  dish_count: number
+  created_at: string
+  updated_at: string
 }
 
 /** 跳过确认的输入项 */
@@ -326,6 +356,7 @@ function buildDetail(sessionId: number): CookingSessionDetail {
   return {
     id: session.id,
     status: session.status as CookingSessionStatus,
+    name: session.name,
     recipe_revision: session.recipe_revision,
     started_at: session.started_at,
     finished_at: session.finished_at,
@@ -362,25 +393,27 @@ export function createSession(): CookingSessionDetail {
   return buildDetail(created.id)
 }
 
-/** 列出全部会话（最近创建的在前） */
-export function listSessions(): Array<{
-  id: number
-  status: CookingSessionStatus
-  recipe_revision: number
-  started_at: string
-  dish_count: number
-  created_at: string
-  updated_at: string
-}> {
+/**
+ * 列出全部会话。
+ *
+ * ⚠️ 排序由**后端全表保证**（v0.2.1.1）：
+ *    `started_at` 降序 —— 最新的烹饪在最前面；
+ *    同一时间（同一分钟并发创建）用 `id` 降序做**稳定次序**。
+ *
+ * ⚠️ 本接口当前**不分页**，返回全量；若将来分页，必须保持
+ *    「先在完整集合上排序，再切页」，不得只对当前页做倒序。
+ */
+export function listSessions(): CookingSessionSummary[] {
   const rows = db
     .select()
     .from(cookingSession)
-    .orderBy(asc(cookingSession.id))
+    .orderBy(desc(cookingSession.started_at), desc(cookingSession.id))
     .all()
 
   return rows.map((s) => ({
     id: s.id,
     status: s.status as CookingSessionStatus,
+    name: s.name,
     recipe_revision: s.recipe_revision,
     started_at: s.started_at,
     dish_count: db
@@ -416,6 +449,153 @@ export function abandonSession(id: number): CookingSessionDetail {
     .run()
 
   return buildDetail(id)
+}
+
+/**
+ * 设置或清除烹饪记录的**自定义名称**（v0.2.1.1）。
+ *
+ * @param name `null` = **恢复默认名**（把列写回 NULL，前端据 `started_at` 渲染）；
+ *             非 null 字符串 = 自定义名称，**trim 后**保存。
+ *
+ * 规则：
+ *   - `null`   → 写 NULL。这是「恢复默认」的**唯一**表达方式。
+ *   - 字符串   → `trim()` 后为空 ⇒ **拒绝**（400）。空白输入与「恢复默认」
+ *                语义不同，必须由前端区分，不能靠后端猜测。
+ *   - 长度     → `trim()` 后不得超过 `COOKING_SESSION_NAME_MAX_LENGTH`。
+ *
+ * ⚠️ 刻意**不**校验会话状态：终态（`settled` / `abandoned`）同样允许改名。
+ *    改名只是给历史记录贴标签，不是业务状态变更；否则「整理旧记录」
+ *    这一主要用途根本无法完成。
+ * ⚠️ **不改动 `started_at`**，因此**不改变列表排序**；只更新 `updated_at`。
+ *
+ * @throws SESSION_NOT_FOUND / VALIDATION_ERROR
+ */
+export function updateSessionName(id: number, name: string | null): CookingSessionSummary {
+  const session = requireSession(id)
+
+  let next: string | null
+  if (name === null) {
+    next = null
+  } else if (typeof name !== 'string') {
+    throw validationError(`名称必须是字符串或 null，当前类型为：${typeof name}`)
+  } else {
+    const trimmed = name.trim()
+    if (trimmed.length === 0) {
+      throw validationError(
+        '名称不能为空或纯空白。若要恢复默认名称，请使用「恢复默认」（传 null）。',
+      )
+    }
+    if (trimmed.length > COOKING_SESSION_NAME_MAX_LENGTH) {
+      throw validationError(
+        `名称过长：最多 ${COOKING_SESSION_NAME_MAX_LENGTH} 个字符，当前 ${trimmed.length} 个。`,
+      )
+    }
+    next = trimmed
+  }
+
+  const timestamp = nowIso()
+  db.update(cookingSession)
+    .set({ name: next, updated_at: timestamp })
+    .where(eq(cookingSession.id, id))
+    .run()
+
+  return {
+    id: session.id,
+    status: session.status as CookingSessionStatus,
+    name: next,
+    recipe_revision: session.recipe_revision,
+    started_at: session.started_at,
+    dish_count: db
+      .select({ id: cookingSessionDish.id })
+      .from(cookingSessionDish)
+      .where(eq(cookingSessionDish.session_id, session.id))
+      .all().length,
+    created_at: session.created_at,
+    updated_at: timestamp,
+  }
+}
+
+/**
+ * 批量删除烹饪记录（v0.2.1.1）。
+ *
+ * ⚠️⚠️ **这是「清理历史记录」，不是「撤销烹饪」**：
+ *    - **不回补库存**、也**不再次扣减库存**；
+ *    - `standard_ingredient` 的任何数值**完全不改动**；
+ *    - 只删除**所选会话**及其**从属记录**，不触碰未选会话、菜谱、食材定义。
+ *
+ * ⚠️ 删除顺序必须显式按**外键依赖**排列，不能只依赖 ON DELETE CASCADE：
+ *    `cooking_settlement_item.dish_id` 是 **ON DELETE RESTRICT**，
+ *    若先删 `cooking_session_dish`，级联删除会因该 RESTRICT 而失败。
+ *    因此顺序固定为：
+ *      结算明细 → 结算凭证 → 跳过确认 → 菜品 → 会话
+ *
+ * ⚠️ **全有或全无**：只要有一个 id 不存在，整批拒绝（404），
+ *    不做「部分删除」，避免前端的选择状态与后端实际状态不一致。
+ *
+ * ⚠️ 全部删除在**单个事务**内完成；任一步失败整体回滚。
+ *
+ * @throws VALIDATION_ERROR（ids 为空 / 非正整数）
+ * @throws SESSION_NOT_FOUND（存在不存在的 id，整批拒绝且不删除任何行）
+ */
+export function deleteSessions(rawIds: number[]): { deleted_ids: number[] } {
+  if (!Array.isArray(rawIds) || rawIds.length === 0) {
+    throw validationError('必须提供至少一个要删除的会话 id')
+  }
+
+  // 去重，保持调用方给出的顺序
+  const ids = [...new Set(rawIds)]
+
+  for (const id of ids) {
+    if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
+      throw validationError(`非法的会话 id：${String(id)}。id 必须是正整数`)
+    }
+  }
+
+  const existing = db
+    .select({ id: cookingSession.id })
+    .from(cookingSession)
+    .where(inArray(cookingSession.id, ids))
+    .all()
+    .map((r) => r.id)
+
+  const missing = ids.filter((id) => !existing.includes(id))
+  if (missing.length > 0) {
+    throw sessionNotFoundError(`烹饪会话不存在：id=${missing.join(', ')}`)
+  }
+
+  db.transaction((tx) => {
+    // 1. 结算明细（经 settlement_id 关联；必须先于菜品删除）
+    const settlementIds = tx
+      .select({ id: cookingSettlement.id })
+      .from(cookingSettlement)
+      .where(inArray(cookingSettlement.session_id, ids))
+      .all()
+      .map((r) => r.id)
+
+    if (settlementIds.length > 0) {
+      tx.delete(cookingSettlementItem)
+        .where(inArray(cookingSettlementItem.settlement_id, settlementIds))
+        .run()
+    }
+
+    // 2. 结算凭证
+    tx.delete(cookingSettlement).where(inArray(cookingSettlement.session_id, ids)).run()
+
+    // 3. 跳过确认
+    tx.delete(cookingSessionDishSkip)
+      .where(inArray(cookingSessionDishSkip.session_id, ids))
+      .run()
+
+    // 4. 会话内的菜品行
+    tx.delete(cookingSessionDish).where(inArray(cookingSessionDish.session_id, ids)).run()
+
+    // 5. 会话本身
+    tx.delete(cookingSession).where(inArray(cookingSession.id, ids)).run()
+
+    // ⚠️ 到此为止：不删除菜谱、不删除食材定义、不修改任何库存数量
+  })
+
+  return { deleted_ids: ids }
 }
 
 /* ============================================================
