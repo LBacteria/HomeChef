@@ -5,7 +5,7 @@ import BrandLogo from '../components/BrandLogo'
 import kitchenBg from '../assets/kitchen-bg.webp'
 
 /**
- * 主页（v0.2.2 中式灶台改版）。
+ * 主页（v0.2.1.1 中式灶台改版）。
  *
  * 结构
  * ────
