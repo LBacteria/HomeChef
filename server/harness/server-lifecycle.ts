@@ -38,6 +38,12 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+// ⚠️ 必须是**本地导入**：`startServer()` 内部要**调用** `assertSafeDbPath`，
+//    而 `export { X } from '...'` 只导出、**不引入本地绑定** ——
+//    只写 re-export 会让 startServer 在运行时报
+//    `ReferenceError: assertSafeDbPath is not defined`（v0.2.1 提取实现时引入）。
+import { assertSafeDbPath } from '../src/db/safe-db-path.js'
+
 const require = createRequire(import.meta.url)
 
 /* ============================================================
@@ -68,7 +74,8 @@ export function resolveTsxHooks(): { preflight: string; loader: string } {
  *    此处保留 re-export，使既有导入方式保持不变。
  * ============================================================ */
 
-export { assertSafeDbPath } from '../src/db/safe-db-path.js'
+// 保留 re-export：既有脚本仍可从 harness 导入该方法（导出面不变）
+export { assertSafeDbPath }
 
 /* ============================================================
  * 进程登记与全局清理
