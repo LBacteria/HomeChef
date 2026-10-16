@@ -283,7 +283,18 @@ if (ready) {
 
   const emptyTags = await req('GET', '/api/tags')
   ok('GET /api/tags → 200', emptyTags.status === 200, `${emptyTags.status}`)
-  ok('  空库返回空数组', Array.isArray(emptyTags.body) && emptyTags.body.length === 0)
+  /*
+   * ⚠️ v0.2.3 起：迁移 0012 会播种**系统预设 Tag**，空库不再返回空数组。
+   *    断言改为「**只有系统预设、没有任何用户自建 Tag**」——
+   *    比原来的「length === 0」更具体，仍然拦住用户态标签泄漏。
+   */
+  ok(
+    '  空库只有系统预设 Tag（无用户自建）',
+    Array.isArray(emptyTags.body) &&
+      emptyTags.body.length > 0 &&
+      emptyTags.body.every((t: any) => t.is_system === true),
+    `${emptyTags.body?.length}`,
+  )
 
   /* ============================================================
    * 四、无效 ID 与不存在
@@ -407,10 +418,12 @@ if (ready) {
     /* ---------- Tag 列表 ---------- */
     const tags = await req('GET', '/api/tags')
     ok('GET /api/tags → 200', tags.status === 200, `${tags.status}`)
-    ok('  返回 2 个 Tag', tags.body.length === 2, `${tags.body.length}`)
+    // ⚠️ v0.2.3：列表同时含系统预设；这里只看**用户自建**部分（原意图不变）
+    const userTags = tags.body.filter((t: any) => t.is_system !== true)
+    ok('  返回 2 个用户自建 Tag', userTags.length === 2, `${userTags.length}`)
     ok('  Tag 名称正确',
-      JSON.stringify(tags.body.map((t: any) => t.name)) === JSON.stringify(['家常菜', '快手']),
-      JSON.stringify(tags.body.map((t: any) => t.name)))
+      JSON.stringify(userTags.map((t: any) => t.name)) === JSON.stringify(['家常菜', '快手']),
+      JSON.stringify(userTags.map((t: any) => t.name)))
 
     /* ---------- 无 Tag 的菜谱详情 ---------- */
     const detail2 = await req('GET', `/api/recipes/${r2id}`)
@@ -492,8 +505,9 @@ if (ready) {
     const afterIng = (raw.prepare('select count(*) c from recipe_ingredient where recipe_id = ?').get(r2id) as any).c
     ok('删除菜谱级联清理食材关联', beforeIng > 0 && afterIng === 0, `${beforeIng} → ${afterIng}`)
 
-    const tagStillThere = raw.prepare('select count(*) c from recipe_tag').get() as any
-    ok('★ 删除菜谱**不会**删除 Tag', tagStillThere.c === 2, `${tagStillThere.c}`)
+    // ⚠️ v0.2.3：系统预设 Tag 也在这张表里，因此只统计**用户自建**的 2 个
+    const tagStillThere = raw.prepare('select count(*) c from recipe_tag where is_system = 0').get() as any
+    ok('★ 删除菜谱**不会**删除 Tag（2 个用户自建 Tag 仍在）', tagStillThere.c === 2, `${tagStillThere.c}`)
   }
 }
 

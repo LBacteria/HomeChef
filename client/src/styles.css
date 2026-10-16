@@ -2650,3 +2650,338 @@ button.danger:hover:not(:disabled) {
   color: #7a5b00;
   font-size: 0.75rem;
 }
+
+/* ============================================================
+ * v0.2.3：五分类标签（选择器 / 管理弹窗 / 偏好按钮 / 详情分组）
+ * ============================================================ */
+
+.recipe-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ---------- 分类 Tag 选择器 ---------- */
+.tag-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.tag-picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.tag-picker-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #4a4a4a;
+  margin-bottom: 0.35rem;
+}
+
+.tag-picker-group-count {
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.tag-picker-group-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tag-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tag-picker-preset {
+  margin-left: 0.25rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 0.2rem;
+}
+
+.tag-picker-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ---------- Tag 选择器：作用域化修复（v0.2.3 截图验收） ----------
+ * 根因（不是"压缩换行"，而是选择器污染）：
+ *   · `.modal label`（styles.css:239，特指度 0-1-1）**高于** `.tag-select-item`(0-1-0)，
+ *     把标签项强制成 `flex-direction: column` → 勾选框跑到文字上方、卡片被拉高；
+ *     并额外带上 `margin-bottom: 8px`。
+ *   · `.modal input`（styles.css:247）把 `checkbox` 拉成 `width: 100%` → 椭圆大卡片。
+ * 修法：
+ *   ① 用 (0-2-x) 作用域选择器覆盖上述两条污染，**不动全局 `.modal` / `label` 规则**
+ *      （其他普通表单标签样式保持原样）；
+ *   ② 弹窗内**只保留一个**内容滚动容器（`.tag-select-list-wrap`），
+ *      内层 `.tag-picker-groups` 不再滚动 → 消除两层嵌套滚动条；
+ *   ③ 分类标题 `sticky`，滚动时不再被裁；
+ *   ④ 显式 `row` + `checkbox` 自适应宽度；窄屏长标签允许换行，不溢出。
+ */
+.tag-select-list-wrap {
+  flex: 1 1 auto; /* ★ 由 flex 分配剩余高度：不再用固定 52vh（短屏会顶掉底部按钮） */
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto; /* 唯一内容滚动容器 */
+  overscroll-behavior: contain;
+}
+
+.tag-picker-groups {
+  max-height: none; /* 取消内层第二个滚动条 */
+  overflow: visible;
+}
+
+.tag-picker-group-title {
+  position: sticky; /* 分类标题滚动时停在顶部，不被裁切 */
+  top: 0;
+  z-index: 1;
+  background: #fff;
+  padding: 4px 0 2px;
+  flex-shrink: 0;
+}
+
+/* 宽度约束：长标签名不再撑出横向溢出 */
+.tag-picker-list,
+.tag-picker-list li {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.tag-picker .tag-select-item {
+  display: inline-flex;
+  flex-direction: row; /* ★ 覆盖 .modal label 的 column：勾选框回到文字左侧 */
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0; /* 覆盖 .modal label 的 8px */
+  line-height: 1.2;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.tag-picker .tag-select-item input[type='checkbox'] {
+  width: auto; /* 覆盖 .modal input 的 width: 100% */
+  min-width: 0;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.tag-picker .tag-select-item > span {
+  min-width: 0;
+  white-space: normal; /* 常规名自然紧凑；长名可换行 */
+  overflow-wrap: anywhere; /* ≤60 字上限的长名在任意位置断行，绝不横向溢出 */
+}
+
+/* 弹窗整体：固定高度预算 = 视口 − 安全边距，内容按列分配，只有列表滚动 */
+.tag-select-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100dvh - 48px);
+}
+
+.tag-select-dialog > h2,
+.tag-select-dialog .tag-select-mode,
+.tag-select-dialog .modal-actions {
+  flex-shrink: 0; /* 模式行 / 标题 / 底部按钮不参与收缩，绝不被挤出视口 */
+}
+
+@media (max-width: 480px) {
+  .tag-select-dialog {
+    max-height: calc(100dvh - 24px);
+  }
+  .tag-select-dialog .tag-select-mode {
+    flex-wrap: wrap; /* 窄屏：模式行允许换行，不裁掉按钮 */
+    row-gap: 6px;
+  }
+}
+
+/* ---------- 标签管理弹窗 ---------- */
+.tag-manager {
+  max-height: 88vh;
+  overflow-y: auto;
+  max-width: 720px;
+  width: min(94vw, 720px);
+}
+
+.tag-manager-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.tag-manager-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin: 0.75rem 0;
+}
+
+.tag-manager-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+  margin: 0 0 0.4rem;
+}
+
+.tag-manager-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tag-manager-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.tag-manager-name {
+  font-weight: 600;
+}
+
+.tag-manager-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-right: auto;
+}
+
+.tag-manager-create {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.tag-manager-confirm {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: #fff6f5;
+}
+
+/* ---------- 单菜偏好按钮 ---------- */
+.pref-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.pref-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+.pref-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pref-btn-like.active {
+  background: #e8f5ec;
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.pref-btn-dislike.active {
+  background: #fdecea;
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.pref-buttons-compact .pref-btn {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
+}
+
+.pref-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
+/* ---------- 详情页标签分组 ---------- */
+.recipe-detail-tag-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.recipe-detail-tag-group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.recipe-detail-tag-group-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  min-width: 4.5rem;
+}
+
+/*
+ * v0.2.3：标签管理弹窗必须盖在「新建 / 编辑菜谱」表单**之上**。
+ *
+ * ⚠️ 从表单里点「管理全部标签」时表单**不关闭**（保住未保存草稿），
+ *    因此两个 backdrop 会同时存在，层级必须显式指定，
+ *    不能依赖 DOM 顺序（表单渲染在管理弹窗之后）。
+ */
+.tag-manager-backdrop {
+  z-index: 200;
+}
+
+/* 分类字典加载失败提示（不能让所有标签看起来"变成未分类了"） */
+.tag-picker-dict-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.6rem;
+  border-left: 3px solid #c9843f;
+  background: #fff7ec;
+  color: #7a5320;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}

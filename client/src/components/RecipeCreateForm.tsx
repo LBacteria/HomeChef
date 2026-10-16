@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import { createRecipe, saveRecipeFull } from '../api/recipes'
 import { ApiError, UNITS } from '../types/api'
-import type { RecipeDetail, RecipeInput, RecipeTagItem } from '../types/api'
+import TagPicker from './TagPicker'
+import type { RecipeDetail, RecipeInput, RecipeTagItem, TagCategoryDict } from '../types/api'
 import IngredientPicker from './IngredientPicker'
 
 /**
@@ -39,9 +40,34 @@ interface PickedDefinition {
   aliases?: Array<{ alias: string }>
 }
 
+/**
+ * v0.2.3：标签在「标签管理」里被改动时发给编辑器的**单次事件**。
+ *
+ * ⚠️ 设计意图：编辑器正在编辑的草稿（名称 / 配料 / 步骤）**必须存活**，
+ *    因此这里只通知「某个标签改名 / 被删」，
+ *    由编辑器**只同步自己的已选标签**，绝不整体重置草稿，
+ *    也不需要父级关闭再打开表单。
+ * `token` 用于去重：同一事件不会因重渲染或重挂载被重复应用。
+ */
+export type TagMutation =
+  | { kind: 'renamed'; from: string; to: string; token: number }
+  | { kind: 'deleted'; name: string; token: number }
+
 interface Props {
   open: boolean
   allTags: RecipeTagItem[]
+  /** v0.2.3：五大分类字典（后端下发） */
+  tagDict?: TagCategoryDict | null
+  /** v0.2.3：分类字典加载失败时的提示（原样透传给 TagPicker） */
+  tagDictError?: string | null
+  /** v0.2.3：重试加载分类字典 */
+  onRetryTagDict?: () => void
+  /** v0.2.3：标签改动事件（只同步 selectedTags，不动其他草稿） */
+  tagMutation?: TagMutation | null
+  /** v0.2.3：打开「标签管理」弹窗（可选；**不会**关闭本表单） */
+  onOpenTagManager?: () => void
+  /** v0.2.3：标签发生变更（新建）后通知父级刷新 Tag 列表 */
+  onTagsChanged?: () => void
   /** 编辑模式：传入待编辑的菜谱；新建模式传 null / 省略 */
   initial?: RecipeDetail | null
   onCancel: () => void
@@ -113,7 +139,19 @@ function emptyStep(): StepDraft {
   return { key: makeDraftKey(), content: '' }
 }
 
-export default function RecipeCreateForm({ open, allTags, initial = null, onCancel, onSaved }: Props) {
+export default function RecipeCreateForm({
+  open,
+  allTags,
+  tagDict = null,
+  tagDictError = null,
+  onRetryTagDict,
+  tagMutation = null,
+  onOpenTagManager,
+  onTagsChanged,
+  initial = null,
+  onCancel,
+  onSaved,
+}: Props) {
   const isEdit = initial !== null
 
   const [name, setName] = useState('')
@@ -184,6 +222,24 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
     submittingRef.current = false
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initial?.id])
+
+  /* ------------------------------------------------------------
+   * v0.2.3：标签被改名 / 删除 → **只同步已选标签**
+   *
+   * ⚠️ 只动 `selectedTags`：名称、配料、步骤等未保存草稿一律不碰。
+   * ⚠️ 用 token 去重，避免同一事件在重渲染 / 重挂载时重复应用。
+   * ------------------------------------------------------------ */
+  const appliedTagMutation = useRef<number | null>(null)
+  useEffect(() => {
+    const m = tagMutation
+    if (!m || appliedTagMutation.current === m.token) return
+    appliedTagMutation.current = m.token
+    setSelectedTags((prev) =>
+      m.kind === 'renamed'
+        ? prev.map((t) => (t === m.from ? m.to : t))
+        : prev.filter((t) => t !== m.name),
+    )
+  }, [tagMutation])
 
   if (!open) return null
 
@@ -526,37 +582,27 @@ export default function RecipeCreateForm({ open, allTags, initial = null, onCanc
           </button>
         </div>
 
-        {/* Tag 多选 */}
+        {/* Tag 多选（v0.2.3：按五大分类分组，可就地新建；**无固定数量上限**） */}
         <div className="field-block">
-          <span className="field-label">Tag（可选）</span>
-          {allTags.length === 0 ? (
-            <p className="recipe-create-tag-empty">
-              暂无 Tag。可先保存菜谱，再在列表的「选择 Tag」窗口内创建。
-            </p>
-          ) : (
-            <div className="recipe-create-tags">
-              {allTags.map((t) => {
-                const checked = selectedTags.includes(t.name)
-                return (
-                  <label key={t.id} className={checked ? 'recipe-create-tag checked' : 'recipe-create-tag'}>
-                    <input
-                      type="checkbox"
-                      name="recipe-tag"
-                      autoComplete="off"
-                      checked={checked}
-                      disabled={saving}
-                      onChange={() =>
-                        setSelectedTags((prev) =>
-                          prev.includes(t.name) ? prev.filter((x) => x !== t.name) : [...prev, t.name],
-                        )
-                      }
-                    />
-                    <span>{t.name}</span>
-                  </label>
-                )
-              })}
-            </div>
-          )}
+          <span className="field-label">Tag（可选，可多选）</span>
+          <TagPicker
+            allTags={allTags}
+            dict={tagDict ?? null}
+            dictError={tagDictError}
+            onRetryDict={onRetryTagDict}
+            selected={selectedTags}
+            disabled={saving}
+            onToggle={(name) =>
+              setSelectedTags((prev) =>
+                prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name],
+              )
+            }
+            onOpenManager={onOpenTagManager}
+            onCreated={(name) => {
+              setSelectedTags((prev) => (prev.includes(name) ? prev : [...prev, name]))
+              onTagsChanged?.()
+            }}
+          />
         </div>
 
         {formError !== null && <p className="form-error">{formError}</p>}

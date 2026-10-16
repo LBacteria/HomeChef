@@ -1,26 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { listRecipes, getRecipe, deleteRecipe } from '../api/recipes'
-import { listTags } from '../api/tags'
+import { listRecipes, getRecipe, deleteRecipe, listPreferences, setPreference } from '../api/recipes'
+import { getTagCategories, listTags } from '../api/tags'
 import {
   getRecipeListSettings,
   updateRecipeListSettings,
 } from '../api/recipeListSettings'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog'
 import RecipeCreateForm from '../components/RecipeCreateForm'
+import type { TagMutation } from '../components/RecipeCreateForm'
 import RecipeDetailView from '../components/RecipeDetailView'
 import RecipeFilterBar from '../components/RecipeFilterBar'
 import RecipeList from '../components/RecipeList'
+import TagManagerModal from '../components/TagManagerModal'
 import TagSelectDialog from '../components/TagSelectDialog'
 import { ApiError } from '../types/api'
 import type {
   RecipeDetail,
   RecipeListSettings,
+  RecipePreferenceValue,
   RecipeSortField,
   RecipeSortOrder,
   RecipeSummary,
   RecipeTagItem,
   RecipeTagMode,
+  TagCategoryDict,
 } from '../types/api'
 
 /**
@@ -77,11 +81,28 @@ export default function RecipesPage() {
   const [tags, setTags] = useState<RecipeTagItem[]>([])
   const [tagsLoading, setTagsLoading] = useState(false)
   const [tagsError, setTagsError] = useState<string | null>(null)
+  /** v0.2.3：五大分类字典（**后端下发**，前端不写死中文分类） */
+  const [tagDict, setTagDict] = useState<TagCategoryDict | null>(null)
+  /** v0.2.3：分类字典加载失败原因（必须可见 + 可重试，不能静默降级） */
+  const [tagDictError, setTagDictError] = useState<string | null>(null)
+  /** v0.2.3：单菜偏好（recipe_id → like / dislike） */
+  const [preferences, setPreferences] = useState<Record<number, RecipePreferenceValue>>({})
+  /** v0.2.3：偏好是否**已成功加载**（未成功时禁止交互，避免把"未知"当 null 覆盖） */
+  const [prefReady, setPrefReady] = useState(false)
+  const [prefError, setPrefError] = useState<string | null>(null)
+  /**
+   * v0.2.3：标签改动**单次事件**，转发给正在编辑的表单，
+   * 让它只同步已选标签而**不重置**其他草稿。
+   */
+  const [tagMutation, setTagMutation] = useState<TagMutation | null>(null)
+  const tagMutationSeq = useRef(0)
   /** 首次设置加载完成前不请求列表（避免用默认值多发一次请求） */
   const [settingsReady, setSettingsReady] = useState(false)
 
   /* ---------- 弹窗 ---------- */
   const [tagDialogOpen, setTagDialogOpen] = useState(false)
+  /** v0.2.3：标签管理弹窗 */
+  const [tagManagerOpen, setTagManagerOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
 
   /* ---------- 详情 / 编辑 / 删除（批次 4 剩余功能）---------- */
@@ -230,6 +251,44 @@ export default function RecipesPage() {
     }
   }, [])
 
+  /**
+   * v0.2.3：加载五大分类字典。
+   *
+   * ⚠️ 失败**不能静默**：否则所有标签都会落进「未分类」分组，
+   *    用户会以为分类数据丢了。这里记录错误并允许重试。
+   */
+  const loadTagDict = useCallback(async () => {
+    setTagDictError(null)
+    try {
+      const dict = await getTagCategories()
+      setTagDict(dict)
+    } catch (e) {
+      setTagDict(null)
+      setTagDictError(e instanceof ApiError ? e.message : '加载分类字典失败')
+    }
+  }, [])
+
+  /**
+   * v0.2.3：加载单菜偏好。
+   *
+   * ⚠️ 失败时**绝不能**把"未知"当成 `null`：那样用户点一下「取消评价」
+   *    就可能覆盖掉真实的偏好。这里把 `prefReady` 置 false，
+   *    界面据此**禁用**评价控件并给出错误 + 重试。
+   */
+  const loadPreferences = useCallback(async () => {
+    setPrefError(null)
+    try {
+      const prefs = await listPreferences()
+      const map: Record<number, RecipePreferenceValue> = {}
+      for (const p of prefs) map[p.recipe_id] = p.value
+      setPreferences(map)
+      setPrefReady(true)
+    } catch (e) {
+      setPrefReady(false)
+      setPrefError(e instanceof ApiError ? e.message : '加载评价状态失败')
+    }
+  }, [])
+
   /* ============================================================
    * 首次加载：设置 → Tag（清理无效已选）→ 列表
    * ============================================================ */
@@ -242,6 +301,13 @@ export default function RecipesPage() {
         if (cancelled) return
 
         const availableTags = await loadTags()
+        if (cancelled) return
+
+        // v0.2.3：分类字典与单菜偏好 —— 失败**不阻塞菜谱列表**，
+        // 但必须把失败状态记下来（界面会给错误 + 重试，而不是静默降级）
+        await loadTagDict()
+        if (cancelled) return
+        await loadPreferences()
         if (cancelled) return
 
         const validNames = new Set(availableTags.map((t) => t.name))
@@ -353,6 +419,72 @@ export default function RecipesPage() {
       sort_order: order,
       tag_mode: tagMode,
       selected_tags: selectedTags,
+    })
+  }
+
+  /**
+   * v0.2.3：统一应用「已选 Tag」变化（列表 + 持久化 + 界面三处一致）。
+   *
+   * ⚠️ 必须**同时**做三件事：否则会出现「界面已移除、设置里还留着旧名」
+   *    → 下次打开筛到一个不存在的名字 → 空列表 / 保存菜谱时复活旧标签。
+   */
+  function applySelectedTags(next: string[]) {
+    setSelectedTags(next)
+    void fetchRecipes({ search, selectedTags: next, tagMode, sortField, sortOrder })
+    persistSettings({
+      sort_field: sortField,
+      sort_order: sortOrder,
+      tag_mode: tagMode,
+      selected_tags: next,
+    })
+  }
+
+  /**
+   * 标签被改名。
+   *
+   * ⚠️ 必须**同时**同步三处，缺一处就会出问题：
+   *   ① 当前详情（否则详情仍显示旧名，点「编辑」再保存会**自动重建旧标签**）；
+   *   ② 正在编辑的表单草稿（同上；通过单次事件只 remap `selectedTags`，
+   *      **不碰**名称 / 配料 / 步骤等未保存内容）；
+   *   ③ 列表筛选与持久化设置（否则会筛到一个不存在的名字）。
+   *
+   * ⚠️ 无论该标签是否在当前筛选中，① ② 都要更新 ——
+   *    旧实现用 `if (!selectedTags.includes(...)) return` 提前返回，正是漏洞来源。
+   */
+  function handleTagRenamed(oldName: string, newName: string) {
+    setTagMutation({ kind: 'renamed', from: oldName, to: newName, token: ++tagMutationSeq.current })
+    setDetail((prev) =>
+      prev === null ? prev : { ...prev, tags: prev.tags.map((t) => (t === oldName ? newName : t)) },
+    )
+    if (selectedTags.includes(oldName)) {
+      applySelectedTags(selectedTags.map((t) => (t === oldName ? newName : t)))
+    }
+  }
+
+  /** 标签被删除：同步详情 / 编辑器草稿 / 筛选（同样不能提前返回） */
+  function handleTagDeleted(name: string) {
+    setTagMutation({ kind: 'deleted', name, token: ++tagMutationSeq.current })
+    setDetail((prev) =>
+      prev === null ? prev : { ...prev, tags: prev.tags.filter((t) => t !== name) },
+    )
+    if (selectedTags.includes(name)) {
+      applySelectedTags(selectedTags.filter((t) => t !== name))
+    }
+  }
+
+  /**
+   * v0.2.3：写入 / 取消单菜偏好。
+   *
+   * ⚠️ 以**服务端返回**为准更新状态；失败向上抛（由按钮显示错误），
+   *    绝不「先改界面、失败后假装没发生」。
+   */
+  async function handleSetPreference(recipeId: number, next: RecipePreferenceValue | null) {
+    const res = await setPreference(recipeId, next)
+    setPreferences((prev) => {
+      const copy = { ...prev }
+      if (res.value === null) delete copy[recipeId]
+      else copy[recipeId] = res.value
+      return copy
     })
   }
 
@@ -498,6 +630,13 @@ export default function RecipesPage() {
           {!detailLoading && detailError === null && detail !== null && (
             <RecipeDetailView
               detail={detail}
+              preference={preferences[detail.id] ?? null}
+              preferenceReady={prefReady}
+              preferenceError={prefError}
+              onRetryPreference={() => void loadPreferences()}
+              onSetPreference={(next) => handleSetPreference(detail.id, next)}
+              allTags={tags}
+              tagDict={tagDict}
               onBack={backToList}
               onEdit={() => setEditing(detail)}
               onDelete={() => setDeleteTarget(detail)}
@@ -506,20 +645,32 @@ export default function RecipesPage() {
         </>
       ) : (
         <>
-      {/* ---------- 第一行：标题 + 新建菜谱 ---------- */}
+      {/* ---------- 第一行：标题 + 标签管理 + 新建菜谱 ---------- */}
       <div className="section-header">
         <h2>菜谱</h2>
-        <button
-          type="button"
-          className="primary"
-          disabled={!settingsReady}
-          onClick={() => {
-            setNotice(null)
-            setCreateOpen(true)
-          }}
-        >
-          + 新建菜谱
-        </button>
+        <div className="recipe-header-actions">
+          <button
+            type="button"
+            disabled={!settingsReady}
+            onClick={() => {
+              setNotice(null)
+              setTagManagerOpen(true)
+            }}
+          >
+            管理标签
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={!settingsReady}
+            onClick={() => {
+              setNotice(null)
+              setCreateOpen(true)
+            }}
+          >
+            + 新建菜谱
+          </button>
+        </div>
       </div>
 
       {/* ---------- 第二行 + 第三行 ---------- */}
@@ -600,19 +751,45 @@ export default function RecipesPage() {
       <TagSelectDialog
         open={tagDialogOpen}
         allTags={tags}
+        dict={tagDict}
         selectedTags={selectedTags}
         tagMode={tagMode}
         loadingTags={tagsLoading}
         tagsError={tagsError}
+        dictError={tagDictError}
+        onRetryDict={() => void loadTagDict()}
         onReloadTags={() => void loadTags()}
+        onOpenManager={() => {
+          setTagDialogOpen(false)
+          setTagManagerOpen(true)
+        }}
         onCancel={() => setTagDialogOpen(false)}
         onConfirm={handleConfirmTags}
+      />
+
+      {/* ---------- v0.2.3：标签管理弹窗 ---------- */}
+      <TagManagerModal
+        open={tagManagerOpen}
+        allTags={tags}
+        dict={tagDict}
+        onClose={() => setTagManagerOpen(false)}
+        onReload={() => loadTags()}
+        onRenamed={handleTagRenamed}
+        onDeleted={handleTagDeleted}
       />
 
       {/* ---------- 菜谱表单（新建 / 编辑共用同一实现）---------- */}
       <RecipeCreateForm
         open={createOpen || editing !== null}
         allTags={tags}
+        tagDict={tagDict}
+        tagDictError={tagDictError}
+        onRetryTagDict={() => void loadTagDict()}
+        tagMutation={tagMutation}
+        // ⚠️ 只打开管理弹窗，**不关闭表单**：否则未保存的名称 / 配料 / 步骤 / 标签
+        //    草稿会全部丢失，也没法自然回到编辑。弹窗层级更高，关闭后回到原草稿。
+        onOpenTagManager={() => setTagManagerOpen(true)}
+        onTagsChanged={() => void loadTags()}
         initial={editing}
         onCancel={() => {
           setCreateOpen(false)

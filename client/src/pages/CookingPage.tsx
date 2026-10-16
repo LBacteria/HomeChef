@@ -24,6 +24,7 @@ import type {
   CookingSessionDetail,
   CookingSessionStatus,
   CookingSessionSummary,
+  DerivedSkipReason,
   DishSkipReason,
   SettlementPreview,
   SettlementResult,
@@ -59,10 +60,12 @@ const STATUS_LABEL: Record<CookingSessionStatus, string> = {
 const TERMINAL: readonly CookingSessionStatus[] = ['settled', 'abandoned']
 
 /** 跳过原因的中文说明 */
-const REASON_LABEL: Record<DishSkipReason, string> = {
+const REASON_LABEL: Record<DerivedSkipReason, string> = {
   null_quantity: '用量未指定（「适量」），无法计算扣减量',
   unit_mismatch: '库存中没有单位一致的记录，无法扣减',
   user_choice: '用户主动跳过',
+  seasoning_presence:
+    '调味品只记「有 / 无」，不按量扣减。已备好请确认跳过计量；家里缺少也可以确认省略',
 }
 
 /** 结算结果的标签 */
@@ -673,7 +676,12 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
       .map((it) => ({
         dish_id: it.dish_id,
         line_key: it.line_key as string,
-        reason: it.required_reason as DishSkipReason,
+        /**
+         * ⚠️ v0.2.3（R2）：`seasoning_presence` 是**派生**原因，不能落库。
+         *    必须使用后端给的 `confirm_reason`（调味品映射为既有的 `user_choice`）；
+         *    只有用户**真实点击确认**才会走到这里。
+         */
+        reason: (it.confirm_reason ?? it.required_reason) as DishSkipReason,
       }))
 
     if (pending.length === 0) return
@@ -752,11 +760,18 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
       if (latest === null) return
 
       // ④ 依据最新预览判断（不使用结算前的旧 preview）
+      //
+      // ⚠️ v0.2.3（R4）：`ready` 只表示「待确认项为 0」，**不代表库存充足**。
+      //    展示预览之后库存可能被改动，因此这里必须**同时**检查 `stock_sufficient`，
+      //    否则仍会发起一次**必然失败**的结算请求。
       if (!latest.ready) {
         setActionError(
-          `结算条件尚未满足：仍有 ${latest.needing_confirmation} 项需要确认，` +
-            '或存在库存不足的项目。请处理后重试。',
+          `结算条件尚未满足：仍有 ${latest.needing_confirmation} 项需要确认，请处理后重试。`,
         )
+        return
+      }
+      if (!latest.stock_sufficient) {
+        setActionError('当前库存不足，请补充库存或减少菜量后重试。')
         return
       }
 
@@ -1282,18 +1297,19 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
                             {it.available_quantity} {it.unit ?? ''}
                           </td>
                           <td>
-                            {it.required_reason !== null && !it.confirmed && (
+                            {it.required_reason !== null && !it.confirmed ? (
                               <span className="cooking-need-confirm">
                                 需确认：{REASON_LABEL[it.required_reason]}
                               </span>
-                            )}
-                            {it.required_reason !== null && it.confirmed && (
-                              <span className="cooking-ok">已确认跳过</span>
-                            )}
-                            {it.required_reason === null && it.can_consume && (
+                            ) : it.skipped ? (
+                              <span className="cooking-ok">
+                                {it.required_quantity === null
+                                  ? '已跳过（用量未指定）'
+                                  : '已跳过（不扣库存）'}
+                              </span>
+                            ) : it.can_consume ? (
                               <span className="cooking-ok">可扣减</span>
-                            )}
-                            {it.required_reason === null && !it.can_consume && (
+                            ) : (
                               <span className="cooking-bad">库存不足</span>
                             )}
                           </td>
@@ -1321,15 +1337,22 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
                     <button
                       type="button"
                       className="primary"
-                      disabled={!preview.ready || settling || busy || previewLoading}
+                      disabled={
+                        !preview.ready ||
+                        !preview.stock_sufficient ||
+                        settling ||
+                        busy ||
+                        previewLoading
+                      }
                       onClick={() => void handleSettle()}
                     >
                       {settling ? '结算中…' : '确认并结算（扣减库存）'}
                     </button>
                     {!preview.ready && (
-                      <span className="cooking-hint">
-                        请先完成上述必需确认，或处理库存不足的项目。
-                      </span>
+                      <span className="cooking-hint">请先完成上述必需确认。</span>
+                    )}
+                    {!preview.stock_sufficient && (
+                      <span className="cooking-bad">当前库存不足，请补充库存或减少菜量。</span>
                     )}
                     <span className="cooking-hint">
                       点击结算会先保存所有待提交的份数变更，并重新校验最新状态。

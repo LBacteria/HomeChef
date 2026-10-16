@@ -22,6 +22,7 @@ import {
   validationError,
 } from './errors.js'
 import { isBlankName, normalizeName } from './normalize.js'
+import { RECIPE_TAG_CATEGORIES, isRecipeTagCategory } from './tagConfig.js'
 import { roundQuantity } from './quantity.js'
 import { faultPoint } from './faultInjection.js'
 
@@ -273,17 +274,56 @@ export function getRecipeById(id: number): RecipeDetail {
   }
 }
 
+/** Tag 列表项（v0.2.3 增补分类与稳定身份） */
+export interface RecipeTagListItem {
+  id: number
+  name: string
+  /** 五大分类 code；null = 未分类（旧标签或未指定分类的自定义 Tag） */
+  category: string | null
+  /** 系统预设的稳定身份 code；自定义 Tag 为 null */
+  code: string | null
+  /** true = 迁移播种的系统预设 */
+  is_system: boolean
+  /** 预设展示顺序 */
+  sort_order: number
+  /** 被多少个菜谱引用（供删除前提示） */
+  recipe_count: number
+  created_at: string
+}
+
 /**
- * 列出全部 Tag（按 id 升序）。
+ * 列出全部 Tag（**保持按 id 升序**，与 v0.2.2 返回顺序兼容）。
  *
- * 供「复用已有 Tag」使用。
+ * 新增字段 `category` / `code` / `is_system` / `sort_order` / `recipe_count`；
+ * 原有 `id` / `name` / `created_at` 语义不变。
  */
-export function listTags(): Array<{ id: number; name: string; created_at: string }> {
+export function listTags(): RecipeTagListItem[] {
   return db
-    .select({ id: recipeTag.id, name: recipeTag.name, created_at: recipeTag.created_at })
+    .select({
+      id: recipeTag.id,
+      name: recipeTag.name,
+      category: recipeTag.category,
+      code: recipeTag.code,
+      is_system: recipeTag.is_system,
+      sort_order: recipeTag.sort_order,
+      created_at: recipeTag.created_at,
+      recipe_count: sql<number>`count(${recipeTagLink.id})`,
+    })
     .from(recipeTag)
+    .leftJoin(recipeTagLink, eq(recipeTagLink.tag_id, recipeTag.id))
+    .groupBy(recipeTag.id)
     .orderBy(asc(recipeTag.id))
     .all()
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      category: row.category,
+      code: row.code,
+      is_system: row.is_system === 1,
+      sort_order: row.sort_order,
+      recipe_count: Number(row.recipe_count),
+      created_at: row.created_at,
+    }))
 }
 
 /* ============================================================
@@ -487,13 +527,12 @@ function assertTagNames(raw: unknown): string[] {
     if (typeof item !== 'string') {
       throw validationError('tags 中的每一项都必须是字符串')
     }
-    if (isBlankName(item)) {
-      throw validationError('Tag 名称不能为空')
-    }
-    const key = normalizeName(item)
+    // ⚠️ 与 POST/PATCH 走**同一个**校验（长度/控制字符/空白），菜谱保存无法绕过
+    const safeName = assertTagName(item)
+    const key = normalizeName(safeName)
     if (seen.has(key)) continue // 同一请求内去重，避免违反 UNIQUE(recipe_id, tag_id)
     seen.add(key)
-    result.push(item.trim())
+    result.push(safeName)
   }
   return result
 }
@@ -508,7 +547,9 @@ function resolveTagIds(
   tagNames: string[],
 ): number[] {
   const ids: number[] = []
-  for (const name of tagNames) {
+  for (const rawName of tagNames) {
+    // ⚠️ 即便调用方已校验过，这里仍然再走一次统一校验（防御性，避免新调用点漏校验）
+    const name = assertTagName(rawName)
     const normalized = normalizeName(name)
 
     const found = tx
@@ -983,20 +1024,70 @@ export function deleteRecipe(id: number): void {
  * Tag CRUD
  * ------------------------------------------------------------ */
 
+/** Tag 名称长度上限（与前端 maxLength 保持一致） */
+export const TAG_NAME_MAX_LENGTH = 60
+
+/**
+ * **统一**的 Tag 名称校验（所有入口共用）。
+ *
+ * ⚠️ 为什么必须统一：Tag 有多个写入入口 ——
+ *    `POST /api/tags`、`PATCH /api/tags/:id`，
+ *    以及菜谱「统一保存」里的 `tags[]`（不存在的会**自动创建**）。
+ *    若只在 POST 里校验，菜谱保存就能绕过长度/控制字符限制。
+ *
+ * 规则：必须是字符串；trim 后非空；长度 ≤ 60；不含控制字符。
+ */
+function assertTagName(raw: unknown): string {
+  if (typeof raw !== 'string') {
+    throw validationError('Tag 名称必须是字符串')
+  }
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) {
+    throw validationError('Tag 名称不能为空')
+  }
+  if (trimmed.length > TAG_NAME_MAX_LENGTH) {
+    throw validationError(
+      `Tag 名称最长 ${TAG_NAME_MAX_LENGTH} 个字符，当前为 ${trimmed.length} 个`,
+    )
+  }
+  // 控制字符（含 NUL、换行、制表符、DEL）会破坏界面与后续导出，直接拒绝
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+    throw validationError('Tag 名称不能包含控制字符（换行、制表符等）')
+  }
+  return trimmed
+}
+
+/**
+ * 校验分类入参。
+ *
+ * - `undefined` / `null` → `null`（未分类）
+ * - 字符串必须是五大分类之一，否则 400
+ *
+ * ⚠️ 「未分类」是一个**合法的持久化状态**（旧标签即为此），不是错误。
+ */
+function assertTagCategory(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null
+  if (!isRecipeTagCategory(raw)) {
+    throw validationError(
+      `Tag 分类不合法：${String(raw)}。允许：${RECIPE_TAG_CATEGORIES.join('、')}`,
+    )
+  }
+  return raw
+}
+
 /**
  * 新建 Tag。
  *
+ * @param name     显示名称（trim 后不得为空）
+ * @param category 五大分类 code；`null` / 省略 = 未分类
+ *
  * @throws ServiceError VALIDATION_ERROR / DUPLICATE_NAME
  */
-export function createTag(name: unknown): number {
-  if (typeof name !== 'string') {
-    throw validationError('Tag 名称必须是字符串')
-  }
-  if (isBlankName(name)) {
-    throw validationError('Tag 名称不能为空')
-  }
+export function createTag(name: unknown, category: unknown = undefined): number {
+  const safeName = assertTagName(name)
+  const safeCategory = assertTagCategory(category)
 
-  const normalized = normalizeName(name)
+  const normalized = normalizeName(safeName)
   const existing = db
     .select({ id: recipeTag.id })
     .from(recipeTag)
@@ -1008,10 +1099,66 @@ export function createTag(name: unknown): number {
 
   const created = db
     .insert(recipeTag)
-    .values({ name: name.trim(), name_normalized: normalized, created_at: nowIso() })
+    .values({
+      name: safeName,
+      name_normalized: normalized,
+      category: safeCategory,
+      created_at: nowIso(),
+    })
     .returning({ id: recipeTag.id })
     .get()
   return created.id
+}
+
+/** 修改 Tag 的输入（部分更新：只改传入的字段） */
+export interface TagUpdateInput {
+  name?: unknown
+  category?: unknown
+}
+
+/**
+ * 修改 Tag（重命名 / 改分类，部分更新）。
+ *
+ * ⚠️ 系统预设与自定义 Tag **同等可改**：预设的 `code` / `is_system` 属于
+ *    稳定身份，**不通过本接口修改** —— 重命名预设不会改变它的结构语义
+ *    （见 tagConfig 的 `resolveDishRole`）。
+ * ⚠️ 名称仍然全局归一唯一，改成别人已用的名字 → 409 DUPLICATE_NAME。
+ * ⚠️ 菜谱关联按 `tag_id` 保存，改名不会断开任何关联。
+ *
+ * @throws ServiceError VALIDATION_ERROR / TAG_NOT_FOUND / DUPLICATE_NAME
+ */
+export function updateTag(id: number, input: TagUpdateInput): void {
+  const existing = db.select({ id: recipeTag.id }).from(recipeTag).where(eq(recipeTag.id, id)).get()
+  if (!existing) {
+    throw tagNotFoundError(`Tag 不存在：id=${id}`)
+  }
+
+  const patch: { name?: string; name_normalized?: string; category?: string | null } = {}
+
+  if (input.name !== undefined) {
+    const safeName = assertTagName(input.name)
+    const normalized = normalizeName(safeName)
+    const conflict = db
+      .select({ id: recipeTag.id })
+      .from(recipeTag)
+      .where(eq(recipeTag.name_normalized, normalized))
+      .get()
+    if (conflict && conflict.id !== id) {
+      throw duplicateNameError(`Tag 名称已存在：${normalized}`)
+    }
+    patch.name = safeName
+    patch.name_normalized = normalized
+  }
+
+  if (input.category !== undefined) {
+    patch.category = assertTagCategory(input.category)
+  }
+
+  if (Object.keys(patch).length === 0) {
+    throw validationError('没有可更新的字段（name / category 至少提供一个）')
+  }
+
+  db.update(recipeTag).set(patch).where(eq(recipeTag.id, id)).run()
 }
 
 /**
@@ -1029,6 +1176,55 @@ export function deleteTag(id: number): void {
 
   // recipe_tag_link 由外键 ON DELETE CASCADE 自动清理
   db.delete(recipeTag).where(eq(recipeTag.id, id)).run()
+}
+
+/** 菜谱的 Tag 引用（含稳定身份，供推荐算法判定结构语义） */
+export interface RecipeTagRef {
+  id: number
+  name: string
+  category: string | null
+  code: string | null
+}
+
+/**
+ * 批量取一批菜谱的 Tag 引用。
+ *
+ * ⚠️ 一次查询取全部关联（不做 N+1），返回的每个数组按关联记录 id 升序。
+ * ⚠️ 只读。
+ */
+export function listTagRefsByRecipeIds(
+  recipeIds: readonly number[],
+): Map<number, RecipeTagRef[]> {
+  const result = new Map<number, RecipeTagRef[]>()
+  if (recipeIds.length === 0) return result
+
+  const rows = db
+    .select({
+      recipe_id: recipeTagLink.recipe_id,
+      link_id: recipeTagLink.id,
+      id: recipeTag.id,
+      name: recipeTag.name,
+      category: recipeTag.category,
+      code: recipeTag.code,
+    })
+    .from(recipeTagLink)
+    .innerJoin(recipeTag, eq(recipeTag.id, recipeTagLink.tag_id))
+    .where(inArray(recipeTagLink.recipe_id, [...recipeIds]))
+    .orderBy(asc(recipeTagLink.id))
+    .all()
+
+  for (const row of rows) {
+    const list = result.get(row.recipe_id)
+    const ref: RecipeTagRef = {
+      id: row.id,
+      name: row.name,
+      category: row.category,
+      code: row.code,
+    }
+    if (list) list.push(ref)
+    else result.set(row.recipe_id, [ref])
+  }
+  return result
 }
 
 /** 按 id 列表批量校验食材定义存在（供测试与后续批次复用） */

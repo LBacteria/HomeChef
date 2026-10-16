@@ -12,6 +12,8 @@ import { db } from '../db/index.js'
 import { category, ingredientDefinition, recipe } from '../db/schema.js'
 import {
   DEFAULT_RECIPE_BASE_SERVINGS,
+  HISTORY_HALF_LIFE_DAYS,
+  HISTORY_WINDOW_DAYS,
   MAX_CANDIDATE_RECIPES,
   MAX_COMBINATIONS,
   MAX_PEOPLE,
@@ -27,7 +29,7 @@ import {
   planLevel,
   planLevelRank,
   planSignature,
-  scorePlan,
+  scoreBreakdown,
 } from './recommendationAlgorithm.js'
 import type {
   CandidateRecipeInput,
@@ -36,13 +38,29 @@ import type {
   DishSpec,
   EvaluatedRequirement,
   PlanEvaluation,
+  PlanScoreBreakdown,
+  EvaluateOptions,
   RecipeLineInput,
+  RecipeTagInput,
   StockIndex,
   StockLotInput,
 } from './recommendationAlgorithm.js'
+import {
+  compareCandidateOrder,
+  comparePlanOrder,
+  computeSoftSignals,
+  preferenceAdjustment,
+  historyPenalty,
+  quantityCoverageBucket,
+} from './recommendationRanking.js'
+import type { PlanOrderKey, PlanSoftSignals, PreferenceValue } from './recommendationRanking.js'
+import { getPreferenceMap } from './preferenceService.js'
+import { loadCookingHistory } from './cookingHistoryService.js'
+import type { CookingHistory } from './cookingHistoryService.js'
+import { DISH_ROLE_LABELS } from './tagConfig.js'
 import { evaluateExpiryStatus } from './expiryStatusService.js'
 import { getSettings } from './settingsService.js'
-import { getRecipeById, listRecipes } from './recipeService.js'
+import { getRecipeById, listRecipes, listTagRefsByRecipeIds } from './recipeService.js'
 import { listStock } from './standardIngredientService.js'
 import { todayDateString } from './dates.js'
 import { recipeNotFoundError, snapshotStaleError, validationError } from './errors.js'
@@ -80,6 +98,35 @@ export interface RecommendationDish {
   steps: RecommendationDishStep[]
 }
 
+/** 一条明确的缺口（v0.2.3：不足方案必须逐项标明缺什么） */
+export interface RecommendationShortage {
+  definition_id: number
+  definition_name: string
+  unit: string | null
+  required_quantity: number | null
+  available_quantity: number
+  /** 还差多少；单位不匹配时为 null（无法换算） */
+  missing_quantity: number | null
+  status: 'insufficient' | 'unit_mismatch' | 'seasoning_missing'
+  is_seasoning: boolean
+  note: string
+}
+
+/** 软信号明细（v0.2.3：可解释，便于界面展示） */
+export interface RecommendationSignals {
+  preference: number
+  history: number
+  rotation: number
+  /** 被点赞的菜谱 id（升序） */
+  liked: number[]
+  /** 被点踩的菜谱 id（升序） */
+  disliked: number[]
+  /** 近期已做完的菜谱 id（升序） */
+  cooked_recently: number[]
+  /** 是否与近期做过的一整套菜完全重合 */
+  repeated_meal: boolean
+}
+
 export interface RecommendationPlan {
   /** 稳定标识：recipe_id×servings 的升序拼接 */
   plan_id: string
@@ -89,10 +136,19 @@ export interface RecommendationPlan {
    * 覆盖会影响用量与可用性的全部服务端事实（菜谱配料与内容版本、
    * 相关食材的分类/调味品属性与全部库存批次、临期设置、当天日期）。
    * 期间任何一项变化 → apply 返回 **409 SNAPSHOT_STALE**。
+   *
+   * ⚠️ 有意**不含**偏好、烹饪历史与标签：它们只影响排序，
+   *    不影响「用什么、用多少」，因此不会让用户已确认的用量失效。
    */
   snapshot_id: string
   level: 'ready' | 'nearly' | 'missing'
   score: number
+  /** 评分分项（v0.2.3：库存侧 + 软信号，逐项可解释） */
+  score_breakdown: PlanScoreBreakdown
+  /** 软信号明细 */
+  signals: RecommendationSignals
+  /** 缺口清单（无缺口时为空数组） */
+  shortages: RecommendationShortage[]
   dishes: RecommendationDish[]
   requirements: EvaluatedRequirement[]
   summary: {
@@ -105,11 +161,33 @@ export interface RecommendationPlan {
     expiring_used_count: number
     expired_excluded_count: number
     coverage: number
+    /** 需求满足比例（0–1，逐条需求比率均值；**排序用**，v0.2.3） */
+    quantity_coverage: number
+    /** 可用库存消耗比例（0–1，库存不足时为 0；减少浪费奖励用，v0.2.3） */
+    utilization: number
+    /** 临期可实耗比例（0–1，v0.2.3） */
+    expiring_ratio: number
+    /** 被 ≥2 道菜共享的食材项数（v0.2.3） */
+    shared_requirement_count: number
+    /** 结构搭配得分（标签层面粗略搭配，非营养数值，v0.2.3） */
+    structure_score: number
+    /** 本餐涉及的菜品类型角色（v0.2.3） */
+    dish_roles: string[]
+    /** 本餐涉及的「菜品特点」标签（v0.2.3） */
+    feature_tags: string[]
     categories_used: string[]
     tags_used: string[]
   }
   /** 中文可解释理由 */
   reasons: string[]
+}
+
+/** 推荐的筛选条件（v0.2.3：标签也参与推荐筛选） */
+export interface MealPlanFilter {
+  /** 选中的 Tag 名称；空数组 = 不筛选 */
+  tags?: string[]
+  /** Tag 筛选模式：'and'（默认）| 'or' */
+  tagMode?: 'and' | 'or'
 }
 
 export interface MealPlanResult {
@@ -126,6 +204,21 @@ export interface MealPlanResult {
   truncated: boolean
   /** 用于计算保质期状态的「今天」，便于复现 */
   today: string
+  /** v0.2.3：本次使用的标签筛选（回显，便于界面提示） */
+  tag_filter: {
+    tags: string[]
+    tag_mode: 'and' | 'or'
+    /** 经过标签筛选后仍有配料的菜谱数 */
+    matched_recipe_count: number
+  }
+  /** v0.2.3：命中的烹饪历史概览（只读派生信号） */
+  history: {
+    window_days: number
+    /** 窗口内「已结算且确有完成菜品」的会话数 */
+    settled_meals: number
+    /** 窗口内做过的不同菜谱数 */
+    cooked_recipes: number
+  }
   plans: RecommendationPlan[]
   notes: string[]
 }
@@ -219,6 +312,9 @@ function buildStockIndex(today: string, rule: ExpiryRuleSnapshot): { index: Stoc
       unit: row.unit,
       quantity: row.quantity,
       expiry_status: evaluation.status,
+      // v0.2.3（R3）：FEFO 需要与结算一致的 (到期日, 批次 id) 排序输入
+      lot_id: row.id,
+      expiry_date: row.expiry_date,
     }
     const list = index.get(row.definition_id)
     if (list) list.push(lot)
@@ -233,12 +329,14 @@ interface LoadedRecipe extends CandidateRecipeInput {
   steps: Array<{ step_no: number; content: string }>
 }
 
-function loadRecipe(recipeId: number): LoadedRecipe {
+function loadRecipe(recipeId: number, tagRefs: readonly RecipeTagInput[]): LoadedRecipe {
   const detail = getRecipeById(recipeId)
   return {
     recipe_id: detail.id,
     recipe_name: detail.name,
     tags: detail.tags,
+    // v0.2.3：带分类与稳定 code 的 Tag 引用（结构语义按 code 判定）
+    tag_refs: tagRefs.map((r) => ({ name: r.name, category: r.category, code: r.code })),
     content_revision: detail.content_revision,
     steps: detail.steps.map((s) => ({ step_no: s.step_no, content: s.content })),
     lines: detail.ingredients
@@ -255,13 +353,24 @@ function loadRecipe(recipeId: number): LoadedRecipe {
   }
 }
 
-/** 取全部候选（按 id 升序，确定性） */
-function loadAllCandidates(): { all: LoadedRecipe[]; withIngredients: number } {
-  const summaries = listRecipes()
+/**
+ * 取全部候选（按 id 升序，确定性）。
+ *
+ * v0.2.3：支持按 Tag 筛选（复用既有 `listRecipes` 的 AND / OR 语义），
+ * 并一次性取回全部 Tag 引用（避免逐菜谱查询）。
+ */
+function loadAllCandidates(filter: MealPlanFilter): { all: LoadedRecipe[]; withIngredients: number } {
+  const summaries = listRecipes({
+    tagNames: filter.tags ?? [],
+    tagMode: filter.tagMode,
+  })
     .filter((r) => r.ingredient_count > 0)
     .sort((a, b) => a.id - b.id)
+
+  const tagRefs = listTagRefsByRecipeIds(summaries.map((s) => s.id))
+
   return {
-    all: summaries.map((s) => loadRecipe(s.id)),
+    all: summaries.map((s) => loadRecipe(s.id, tagRefs.get(s.id) ?? [])),
     withIngredients: summaries.length,
   }
 }
@@ -275,34 +384,39 @@ function loadAllCandidates(): { all: LoadedRecipe[]; withIngredients: number } {
  *
  * ⚠️ 旧实现直接按 recipe_id 截断前 40 个，会把**后新增的、明明库存充足**
  *    的菜谱丢掉。现在先按单菜匹配度排序再截断，且排序键完全确定：
- *    等级 → 主缺口数 → 覆盖比例降序 → 临期消耗降序 → recipe_id 升序。
+ *    等级 → 主缺口数 → 用量覆盖（分桶） → **单菜软评分** → 临期消耗 → recipe_id。
+ *
+ * ⚠️⚠️ v0.2.3 关键点：偏好 / 历史**必须在这里就参与排序**。
+ *    若只在最后给方案打分，被截断掉的菜谱会永远轮不到，
+ *    「点赞加权 / 历史降权」就等于没生效。
  */
 function orderCandidatesByStock(
   candidates: readonly LoadedRecipe[],
   stock: StockIndex,
   meta: DefinitionMetaMap,
   multiplier: number,
+  recipeSoftScore: (recipeId: number) => number,
+  evalOptions: EvaluateOptions,
 ): LoadedRecipe[] {
-  const scored = candidates.map((c) => {
-    const e = evaluateCombination([toDishSpec(c, multiplier)], stock, meta)
+  const keyed = candidates.map((c) => {
+    const e = evaluateCombination([toDishSpec(c, multiplier)], stock, meta, evalOptions)
     return {
       c,
-      level: planLevelRank(planLevel(e)),
-      missing: e.main_missing_count,
-      coverage: e.coverage,
-      expiring: e.expiring_used_count,
+      key: {
+        level_rank: planLevelRank(planLevel(e)),
+        main_missing_count: e.main_missing_count,
+        // ⚠️ 排序必须用「需求满足比例」，不能用库存消耗比例
+        //    （后者在库存越缺时反而越大，会偏好更缺的方案）
+        quantity_coverage: e.quantity_coverage,
+        recipe_soft_total: recipeSoftScore(c.recipe_id),
+        expiring_used_count: e.expiring_used_count,
+        recipe_id: c.recipe_id,
+      },
     }
   })
 
-  scored.sort((a, b) => {
-    if (a.level !== b.level) return a.level - b.level
-    if (a.missing !== b.missing) return a.missing - b.missing
-    if (b.coverage !== a.coverage) return b.coverage - a.coverage
-    if (b.expiring !== a.expiring) return b.expiring - a.expiring
-    return a.c.recipe_id - b.c.recipe_id
-  })
-
-  return scored.map((s) => s.c)
+  keyed.sort((a, b) => compareCandidateOrder(a.key, b.key))
+  return keyed.map((s) => s.c)
 }
 
 function toDishSpec(recipe: LoadedRecipe, servings: number): DishSpec {
@@ -310,6 +424,7 @@ function toDishSpec(recipe: LoadedRecipe, servings: number): DishSpec {
     recipe_id: recipe.recipe_id,
     recipe_name: recipe.recipe_name,
     tags: recipe.tags,
+    tag_refs: recipe.tag_refs,
     servings,
     lines: recipe.lines,
   }
@@ -405,7 +520,9 @@ export function computeMealSnapshotId(
   const meta = buildDefinitionMeta()
   const recipes = new Map<number, LoadedRecipe>()
   for (const id of [...new Set(dishes.map((d) => d.recipe_id))]) {
-    recipes.set(id, loadRecipe(id))
+    // ⚠️ 快照**有意不含** Tag（偏好/历史/标签都不影响用量），
+    //    因此这里不需要 Tag 引用，传空数组即可。
+    recipes.set(id, loadRecipe(id, []))
   }
   return fingerprintOf(
     canonicalSnapshotPayload(dishes, { today, rule, stock: index, meta, recipes }),
@@ -445,7 +562,38 @@ function fmtQty(n: number): string {
   return Number.isInteger(n) ? String(n) : String(n)
 }
 
-function buildReasons(evaluation: PlanEvaluation, dishes: readonly DishSpec[]): string[] {
+/**
+ * 缺口清单（v0.2.3：不足方案必须**逐项**标明缺什么）。
+ *
+ * ⚠️ `unit_mismatch` 的 `missing_quantity` 为 null —— 不做单位换算，
+ *    因此不谎报一个「差多少克」的数字。
+ */
+function buildShortages(evaluation: PlanEvaluation): RecommendationShortage[] {
+  return evaluation.requirements
+    .filter(
+      (r) =>
+        r.status === 'insufficient' ||
+        r.status === 'unit_mismatch' ||
+        r.status === 'seasoning_missing',
+    )
+    .map((r) => ({
+      definition_id: r.definition_id,
+      definition_name: r.definition_name,
+      unit: r.unit,
+      required_quantity: r.required_quantity,
+      available_quantity: r.available_quantity,
+      missing_quantity: r.missing_quantity,
+      status: r.status as RecommendationShortage['status'],
+      is_seasoning: r.is_seasoning,
+      note: r.note,
+    }))
+}
+
+function buildReasons(
+  evaluation: PlanEvaluation,
+  dishes: readonly DishSpec[],
+  soft: PlanSoftSignals,
+): string[] {
   const reasons: string[] = []
   const clean =
     evaluation.main_missing_count === 0 &&
@@ -500,6 +648,36 @@ function buildReasons(evaluation: PlanEvaluation, dishes: readonly DishSpec[]): 
     reasons.push(`食材分类较丰富：${evaluation.categories_used.slice(0, 6).join('、')}。`)
   }
 
+  /* ---------- v0.2.3：结构搭配（标签层面粗略搭配，非营养数值） ---------- */
+  if (evaluation.dish_roles.length > 0) {
+    const roleNames = evaluation.dish_roles
+      .map((r) => DISH_ROLE_LABELS[r as keyof typeof DISH_ROLE_LABELS] ?? r)
+      .join('、')
+    if (evaluation.structure_score < 0) {
+      reasons.push(
+        `菜型较单一（${roleNames}），建议再搭配一道不同类型的菜；标签搭配只是粗略参考，不代表营养数值。`,
+      )
+    } else if (evaluation.dish_roles.length >= 2) {
+      reasons.push(`菜型较完整：${roleNames}；这只是按标签做的粗略搭配，不计算营养数值。`)
+    }
+  }
+
+  /* ---------- v0.2.3：软信号（偏好 / 历史 / 轮换） ---------- */
+  if (soft.disliked.length > 0) {
+    reasons.push(`已按你的点踩降低这 ${soft.disliked.length} 道菜的排序权重（不会排除它们）。`)
+  }
+  if (soft.liked.length > 0) {
+    reasons.push(`包含 ${soft.liked.length} 道你点赞过的菜，排序略有加权。`)
+  }
+  if (soft.cooked_recently.length > 0) {
+    reasons.push(
+      `有 ${soft.cooked_recently.length} 道菜最近刚做过，已按时间衰减降低权重，避免连续重复。`,
+    )
+  }
+  if (soft.repeated_meal) {
+    reasons.push('这套组合与你最近做过的一整餐完全相同，已额外降低排序权重。')
+  }
+
   return reasons
 }
 
@@ -512,26 +690,47 @@ function buildReasons(evaluation: PlanEvaluation, dishes: readonly DishSpec[]): 
  *
  * @param rawPeople 人数（会严格校验）
  * @param today     注入「今天」，便于确定性测试；默认取系统今天
+ * @param filter    v0.2.3：标签筛选（不传 = 不筛选）
  *
- * ⚠️ 全程只读，不写数据库。
+ * ⚠️ 全程只读，不写数据库（偏好 / 历史也只读）。
  */
 export function recommendMealPlans(
   rawPeople: unknown,
   today: string = todayDateString(),
+  filter: MealPlanFilter = {},
 ): MealPlanResult {
   const people = validatePeople(rawPeople)
   const multiplier = multiplierFor(people)
   const notes: string[] = []
 
   const rule = currentRule()
+  /**
+   * v0.2.3（R3 边界）：结算若允许用过期食材，临期收益预测必须按"过期先被扣"计算。
+   * ⚠️ 只影响收益预测；"够不够"始终从严（过期不计入可用），与 `COUNT_EXPIRED_AS_AVAILABLE` 无关。
+   */
+  const evalOptions: EvaluateOptions = {
+    includeExpiredInFefo: getSettings().allow_expired_for_recipe,
+  }
   const { index: stock, lotCount } = buildStockIndex(today, rule)
   const meta = buildDefinitionMeta()
-  const { all, withIngredients } = loadAllCandidates()
+
+  /* ---------- v0.2.3：软信号（全部只读） ---------- */
+  const preference: ReadonlyMap<number, PreferenceValue> = getPreferenceMap()
+  const history: CookingHistory = loadCookingHistory(today, HISTORY_WINDOW_DAYS)
+
+  const tags = (filter.tags ?? []).map((t) => t.trim()).filter((t) => t.length > 0)
+  const tagMode: 'and' | 'or' = filter.tagMode === 'or' ? 'or' : 'and'
+
+  const { all, withIngredients } = loadAllCandidates({ tags, tagMode })
 
   const desired = desiredDishCount(people)
 
-  // 条目⑤：**先按单菜库存匹配排序，再截断**
-  const ordered = orderCandidatesByStock(all, stock, meta, multiplier)
+  /** 单菜软评分：偏好 + 历史（**必须在候选截断前**生效） */
+  const recipeSoftScore = (recipeId: number): number =>
+    preferenceAdjustment([recipeId], preference) + historyPenalty([recipeId], history, today)
+
+  // 条目⑤：**先按单菜库存匹配 + 单菜软评分排序，再截断**
+  const ordered = orderCandidatesByStock(all, stock, meta, multiplier, recipeSoftScore, evalOptions)
   const considered = ordered.slice(0, MAX_CANDIDATE_RECIPES)
   const candidateTruncated = ordered.length > considered.length
 
@@ -540,11 +739,31 @@ export function recommendMealPlans(
   notes.push(
     `菜谱按 ${DEFAULT_RECIPE_BASE_SERVINGS} 人份为基准；${people} 人时每道菜按 ${multiplier} 倍量做。`,
   )
+  if (tags.length > 0) {
+    notes.push(
+      `已按标签筛选菜谱：${tags.join('、')}（${tagMode === 'and' ? '需同时满足' : '满足任一'}），` +
+        `筛后仍有配料的菜谱 ${withIngredients} 个。`,
+    )
+  }
   if (candidateTruncated) {
     notes.push(
-      `候选菜谱共 ${ordered.length} 个，仅评估「单菜库存匹配度最高」的前 ${MAX_CANDIDATE_RECIPES} 个` +
-        `（排序键固定：等级 → 缺口 → 覆盖比例 → 临期消耗 → 菜谱 id），可能错过更优组合。`,
+      `候选菜谱共 ${ordered.length} 个，仅评估「单菜库存匹配 + 偏好/历史」排序后的前 ` +
+        `${MAX_CANDIDATE_RECIPES} 个` +
+        `（排序键固定：等级 → 主缺口 → 用量覆盖 → 单菜软评分 → 临期消耗 → 菜谱 id），可能错过更优组合。`,
     )
+  }
+  if (history.recentMeals.length > 0) {
+    notes.push(
+      `已参考最近 ${HISTORY_WINDOW_DAYS} 天内真正做完的 ${history.byRecipe.size} 道菜` +
+        `（按 ${HISTORY_HALF_LIFE_DAYS} 天半衰期降低权重），并做每日确定性轮换；` +
+        `放弃的会话与未完成的菜不计入。`,
+    )
+  }
+  if (history.clamped_future > 0) {
+    notes.push(`有 ${history.clamped_future} 条烹饪记录的时间戳在未来，已按「今天」处理，未产生负天数。`)
+  }
+  if (history.skipped_invalid > 0) {
+    notes.push(`有 ${history.skipped_invalid} 条烹饪记录的时间戳无效，已跳过。`)
   }
   if (dishCount < desired && dishCount > 0) {
     notes.push(`可用菜谱不足 ${desired} 道，按简餐（${dishCount} 道菜）推荐。`)
@@ -552,6 +771,13 @@ export function recommendMealPlans(
   if (lotCount === 0) {
     notes.push('当前没有任何库存记录，推荐结果会以「缺料」为主。')
   }
+
+  const historySummary = {
+    window_days: HISTORY_WINDOW_DAYS,
+    settled_meals: history.recentMeals.length,
+    cooked_recipes: history.byRecipe.size,
+  }
+  const tagFilterSummary = { tags, tag_mode: tagMode, matched_recipe_count: withIngredients }
 
   if (dishCount <= 0) {
     return {
@@ -565,8 +791,15 @@ export function recommendMealPlans(
       combinations_evaluated: 0,
       truncated: false,
       today,
+      tag_filter: tagFilterSummary,
+      history: historySummary,
       plans: [],
-      notes: [...notes, '还没有带配料的菜谱，先到「菜谱」里建几个吧。'],
+      notes: [
+        ...notes,
+        tags.length > 0
+          ? '按当前标签筛选后没有带配料的菜谱，换一组标签或先到「菜谱」里补充吧。'
+          : '还没有带配料的菜谱，先到「菜谱」里建几个吧。',
+      ],
     }
   }
 
@@ -582,31 +815,62 @@ export function recommendMealPlans(
     plan: RecommendationPlan
     recipeIds: number[]
     signature: string
-    levelRank: number
+    /** 完整排序键（等级 → 主缺口 → 覆盖 → 软评分 → 签名） */
+    orderKey: PlanOrderKey
+    /** 同档分组键（等级 | 主缺口 | 覆盖分桶）：重叠惩罚只在同档内改变先后 */
+    tierKey: string
   }
 
   const candidates: Candidate[] = []
 
   for (const combo of combos) {
     const dishes: DishSpec[] = combo.map((idx) => toDishSpec(considered[idx], multiplier))
-    const evaluation = evaluateCombination(dishes, stock, meta)
+    const evaluation = evaluateCombination(dishes, stock, meta, evalOptions)
     const level = planLevel(evaluation)
-    const score = scorePlan(evaluation)
     const signature = planSignature(dishes)
+    const recipeIds = [...new Set(dishes.map((d) => d.recipe_id))]
+
+    // v0.2.3：软信号（偏好 / 历史 / 每日轮换 + 重复组合惩罚）
+    const soft = computeSoftSignals({ signature, recipeIds, today, preference, history })
+    const breakdown = scoreBreakdown(evaluation, {
+      preference: soft.preference,
+      history: soft.history,
+      rotation: soft.rotation,
+    })
 
     const dishPayload = combo.map((idx) => ({ recipe_id: considered[idx].recipe_id, servings: multiplier }))
     const snapshotId = fingerprintOf(canonicalSnapshotPayload(dishPayload, ctx))
 
+    const levelRank = planLevelRank(level)
+    const bucket = quantityCoverageBucket(evaluation.quantity_coverage)
+
     candidates.push({
-      // 稳定排序键：分数降序 → 主缺口升序 → 临期消耗降序 → 签名升序
-      recipeIds: [...new Set(dishes.map((d) => d.recipe_id))],
+      recipeIds,
       signature,
-      levelRank: planLevelRank(level),
+      tierKey: `${levelRank}|${evaluation.main_missing_count}|${bucket}`,
+      orderKey: {
+        level_rank: levelRank,
+        main_missing_count: evaluation.main_missing_count,
+        quantity_coverage: evaluation.quantity_coverage,
+        soft_total: soft.total,
+        signature,
+      },
       plan: {
         plan_id: signature,
         snapshot_id: snapshotId,
         level,
-        score,
+        score: breakdown.total,
+        score_breakdown: breakdown,
+        signals: {
+          preference: soft.preference,
+          history: soft.history,
+          rotation: soft.rotation,
+          liked: soft.liked,
+          disliked: soft.disliked,
+          cooked_recently: soft.cooked_recently,
+          repeated_meal: soft.repeated_meal,
+        },
+        shortages: buildShortages(evaluation),
         dishes: [...dishes]
           .sort((a, b) => a.recipe_id - b.recipe_id)
           .map((d) => {
@@ -640,36 +904,37 @@ export function recommendMealPlans(
           expiring_used_count: evaluation.expiring_used_count,
           expired_excluded_count: evaluation.expired_excluded_count,
           coverage: evaluation.coverage,
+          quantity_coverage: evaluation.quantity_coverage,
+          utilization: evaluation.utilization,
+          expiring_ratio: evaluation.expiring_ratio,
+          shared_requirement_count: evaluation.shared_requirement_count,
+          structure_score: evaluation.structure_score,
+          dish_roles: evaluation.dish_roles,
+          feature_tags: evaluation.feature_tags,
           categories_used: evaluation.categories_used,
           tags_used: evaluation.tags_used,
         },
-        reasons: buildReasons(evaluation, dishes),
+        reasons: buildReasons(evaluation, dishes, soft),
       },
     })
   }
 
-  candidates.sort((a, b) => {
-    if (a.levelRank !== b.levelRank) return a.levelRank - b.levelRank
-    if (b.plan.score !== a.plan.score) return b.plan.score - a.plan.score
-    if (a.plan.summary.main_missing_count !== b.plan.summary.main_missing_count) {
-      return a.plan.summary.main_missing_count - b.plan.summary.main_missing_count
-    }
-    return a.signature < b.signature ? -1 : a.signature > b.signature ? 1 : 0
-  })
+  candidates.sort((a, b) => comparePlanOrder(a.orderKey, b.orderKey))
 
-  /* ---------- 选 top N：等级优先 + 轻量重叠惩罚（条目⑤） ---------- */
+  /* ---------- 选 top N：同档内用重叠惩罚 + 软评分（条目⑤） ---------- */
   const pool = [...candidates]
   const selected: Candidate[] = []
 
   while (selected.length < MAX_PLANS && pool.length > 0) {
-    // ⚠️ 同一等级内才比分数：保证「库存足够」永远优先于「缺料」
-    const bestRank = pool[0].levelRank
+    // ⚠️ 只在**同一档**（等级 + 主缺口 + 覆盖分桶完全相同）内比较：
+    //    保证「库存足够 / 缺口更少 / 覆盖更高」永远优先于软评分与重叠惩罚。
+    const tier = pool[0].tierKey
     let bestIdx = 0
     let bestAdjusted = Number.NEGATIVE_INFINITY
 
     for (let i = 0; i < pool.length; i++) {
       const cand = pool[i]
-      if (cand.levelRank !== bestRank) break
+      if (cand.tierKey !== tier) break
       const overlap = maxOverlapWithSelected(cand.recipeIds, selected)
       const adjusted = cand.plan.score - OVERLAP_PENALTY * overlap
       if (adjusted > bestAdjusted) {
@@ -697,6 +962,8 @@ export function recommendMealPlans(
     combinations_evaluated: combos.length,
     truncated,
     today,
+    tag_filter: tagFilterSummary,
+    history: historySummary,
     plans: selected.map((s) => s.plan),
     notes,
   }

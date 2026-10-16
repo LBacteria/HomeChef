@@ -3,6 +3,9 @@ import type {
   RecipeDetail,
   RecipeInput,
   RecipeListQuery,
+  RecipePreferenceItem,
+  RecipePreferenceState,
+  RecipePreferenceValue,
   RecipeSummary,
 } from '../types/api'
 
@@ -107,4 +110,36 @@ export function saveRecipeFull(id: number, input: RecipeInput): Promise<RecipeDe
  */
 export function deleteRecipe(id: number): Promise<void> {
   return request<void>(`/recipes/${id}`, { method: 'DELETE' })
+}
+
+/* ============================================================
+ * v0.2.3：单菜偏好（点赞 / 点踩）
+ * ============================================================ */
+
+/**
+ * 列出全部单菜偏好（按 recipe_id 升序）。
+ *
+ * ⚠️ 单独接口，**不改变** `GET /api/recipes` 的返回结构与排序。
+ */
+export function listPreferences(): Promise<RecipePreferenceItem[]> {
+  return request<RecipePreferenceItem[]>('/recipe-preferences')
+}
+
+/**
+ * 设置 / 取消单道菜谱的偏好。
+ *
+ * @param value `'like' | 'dislike'` 写入；**`null` = 取消**（后端删除该行）
+ *
+ * ⚠️ 只影响**推荐软评分**（点赞软加权、点踩软降权），**绝不排除**菜谱。
+ * ⚠️ 后端返回的是**实际落库结果**：调用方必须以它为准更新界面，
+ *    不得「先改按钮、失败后再装作没发生过」。
+ */
+export function setPreference(
+  recipeId: number,
+  value: RecipePreferenceValue | null,
+): Promise<RecipePreferenceState> {
+  return request<RecipePreferenceState>(`/recipes/${recipeId}/preference`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  })
 }

@@ -11,7 +11,6 @@ import {
   recipe,
   recipeIngredient,
   recipeStep,
-  standardIngredient,
 } from '../db/schema.js'
 import type { CookingSessionStatus, DishSkipReason } from '../db/schema.js'
 import {
@@ -23,6 +22,11 @@ import {
   validationError,
 } from './errors.js'
 import { MAX_SERVINGS_MULTIPLIER } from './recommendationConfig.js'
+import { scaleLineQuantity } from './quantity.js'
+import { isSeasoningDefinition } from './categoryService.js'
+import { hasUnitMatchedLot } from './stockAvailability.js'
+import { deriveRequiredReason, isSatisfiedBy } from './skipReasonService.js'
+import type { DerivedSkipReason } from './skipReasonService.js'
 
 /**
  * 烹饪会话 Service（v0.2.1 B2）。
@@ -191,7 +195,13 @@ function requireDish(sessionId: number, dishId: number) {
 function requiredSkipsOf(
   q: Queryable,
   recipeId: number,
-): Array<{ line_key: string; definition_id: number; unit_key: string; reason: DishSkipReason }> {
+  servings: number,
+): Array<{
+  line_key: string
+  definition_id: number
+  unit_key: string
+  reason: DerivedSkipReason
+}> {
   const rows = q
     .select({
       line_key: recipeIngredient.line_key,
@@ -207,46 +217,31 @@ function requiredSkipsOf(
     line_key: string
     definition_id: number
     unit_key: string
-    reason: DishSkipReason
+    reason: DerivedSkipReason
   }> = []
 
   for (const r of rows) {
     if (r.line_key === null) continue // 无稳定标识的行无法被确认，跳过
 
-    // ① 用量为 null（「适量」）→ 必需确认跳过
-    if (r.quantity === null) {
+    /**
+     * v0.2.3（R2）：必需项判定**与结算侧 `requiredReasonOf` 共用同一个纯函数**，
+     * 因此必需项集合、确认是否齐全、预览与结算三处永远一致。
+     *
+     * ⚠️ 必须传**份数**：结算的需求量是 `scaleLineQuantity(用量, servings)`，
+     *    若这里按原始用量判定，会出现「确认页说不需要确认、结算却要求确认」。
+     */
+    const reason = deriveRequiredReason({
+      is_seasoning: isSeasoningDefinition(r.definition_id),
+      required_quantity: scaleLineQuantity(r.quantity, servings),
+      has_unit_matched_lot: r.unit !== null && hasUnitMatchedLot(q, r.definition_id, r.unit),
+    })
+
+    if (reason !== null) {
       result.push({
         line_key: r.line_key,
         definition_id: r.definition_id,
         unit_key: r.unit ?? '',
-        reason: 'null_quantity',
-      })
-      continue
-    }
-
-    // ② 用量非 null → 检查是否存在单位一致的库存记录
-    //
-    // 原料行 unit 为 null 时，没有任何库存单位能与之「完全一致」，
-    // 因此同样构成 unit_mismatch。
-    const hasUnitMatch =
-      r.unit !== null &&
-      q
-        .select({ id: standardIngredient.id })
-        .from(standardIngredient)
-        .where(
-          and(
-            eq(standardIngredient.definition_id, r.definition_id),
-            eq(standardIngredient.unit, r.unit),
-          ),
-        )
-        .get() !== undefined
-
-    if (!hasUnitMatch) {
-      result.push({
-        line_key: r.line_key,
-        definition_id: r.definition_id,
-        unit_key: r.unit ?? '',
-        reason: 'unit_mismatch',
+        reason,
       })
     }
   }
@@ -274,20 +269,23 @@ function recomputeConfirmedRevision(tx: Tx, sessionId: number, dishId: number): 
     throw dishNotFoundError(`菜品不存在：dish_id=${dishId}`)
   }
 
-  const required = requiredSkipsOf(tx, dish.recipe_id)
+  const required = requiredSkipsOf(tx, dish.recipe_id, dish.servings)
 
-  const confirmedKeys = new Set(
+  /** line_key → 已落库的确认原因（`saveSkipConfirmations` 保证同一行唯一） */
+  const persistedByLine = new Map(
     tx
       .select({ line_key: cookingSessionDishSkip.line_key, reason: cookingSessionDishSkip.reason })
       .from(cookingSessionDishSkip)
       .where(eq(cookingSessionDishSkip.dish_id, dishId))
       .all()
-      .filter((r) => (REQUIRED_SKIP_REASONS as readonly string[]).includes(r.reason))
-      .map((r) => r.line_key),
+      .map((r) => [r.line_key, r.reason as DishSkipReason]),
   )
 
-  // ★ 必须「全部必需项 ⊆ 已确认」才算齐全 —— 部分确认一律为 0
-  const allConfirmed = required.every((r) => confirmedKeys.has(r.line_key))
+  // ★ 必须「全部必需项都被**真实确认**满足」才算齐全 —— 部分确认一律为 0
+  //   ⚠️ 调味品的 `seasoning_presence` 需要的正是**落库为 `user_choice`** 的确认
+  const allConfirmed = required.every((r) =>
+    isSatisfiedBy(r.reason, persistedByLine.get(r.line_key) ?? null),
+  )
   const next = allConfirmed ? session.recipe_revision : 0
 
   tx.update(cookingSessionDish)
@@ -1167,18 +1165,19 @@ export function findStaleDishes(sessionId: number): Array<{
       continue
     }
 
-    const required = requiredSkipsOf(db, dish.recipe_id)
-    const confirmedKeys = new Set(
+    const required = requiredSkipsOf(db, dish.recipe_id, dish.servings)
+    const persistedByLine = new Map(
       db
         .select({ line_key: cookingSessionDishSkip.line_key, reason: cookingSessionDishSkip.reason })
         .from(cookingSessionDishSkip)
         .where(eq(cookingSessionDishSkip.dish_id, dish.id))
         .all()
-        .filter((r) => (REQUIRED_SKIP_REASONS as readonly string[]).includes(r.reason))
-        .map((r) => r.line_key),
+        .map((r) => [r.line_key, r.reason as DishSkipReason]),
     )
 
-    const missing = required.filter((r) => !confirmedKeys.has(r.line_key)).map((r) => r.line_key)
+    const missing = required
+      .filter((r) => !isSatisfiedBy(r.reason, persistedByLine.get(r.line_key) ?? null))
+      .map((r) => r.line_key)
     if (missing.length > 0) {
       const recipeRow = db
         .select({ name: recipe.name })

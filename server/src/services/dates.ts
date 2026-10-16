@@ -100,3 +100,17 @@ export function compareDates(a: DateString, b: DateString): number {
   if (a > b) return 1
   return 0
 }
+
+/**
+ * 两个 YYYY-MM-DD 之间的**日历天数差**（b − a）。
+ *
+ * ⚠️ 全程 UTC 午夜运算：纯日期字符串不涉及时区，
+ *    因此本地时区偏移不会让结果差一天。
+ * ⚠️ 任一参数无法解析时返回 0（调用方需自行判断是否要跳过该行）。
+ */
+export function daysBetween(a: DateString, b: DateString): number {
+  const ta = Date.parse(`${a}T00:00:00Z`)
+  const tb = Date.parse(`${b}T00:00:00Z`)
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return 0
+  return Math.round((tb - ta) / 86_400_000)
+}

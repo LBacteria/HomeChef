@@ -9,8 +9,12 @@ import {
   listRecipes,
   listTags,
   saveRecipeFull,
+  updateTag,
+  TAG_NAME_MAX_LENGTH,
 } from '../services/recipeService.js'
 import type { RecipeInput } from '../services/recipeService.js'
+import { listPreferences, setPreference } from '../services/preferenceService.js'
+import { RECIPE_TAG_CATEGORIES, listRecipeTagCategories } from '../services/tagConfig.js'
 import {
   getRecipeListSettings,
   updateRecipeListSettings,
@@ -70,12 +74,36 @@ const recipeBodySchema = {
   },
 } as const
 
-/** Tag 创建体 */
+/** Tag 创建体（v0.2.3：category 可选，省略 = 未分类） */
 const tagBodySchema = {
   type: 'object',
   additionalProperties: false,
   required: ['name'],
-  properties: { name: { type: 'string', minLength: 1 } },
+  properties: {
+    name: { type: 'string', minLength: 1, maxLength: TAG_NAME_MAX_LENGTH },
+    category: { type: ['string', 'null'], enum: [...RECIPE_TAG_CATEGORIES, null] },
+  },
+} as const
+
+/** Tag 修改体（v0.2.3：部分更新，至少一个字段） */
+const tagUpdateBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    name: { type: 'string', minLength: 1, maxLength: TAG_NAME_MAX_LENGTH },
+    category: { type: ['string', 'null'], enum: [...RECIPE_TAG_CATEGORIES, null] },
+  },
+} as const
+
+/** 单菜偏好更新体（null = 取消偏好） */
+const preferenceBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['value'],
+  properties: {
+    value: { type: ['string', 'null'], enum: ['like', 'dislike', null] },
+  },
 } as const
 
 /** 空 query（不接受任何参数） */
@@ -202,6 +230,21 @@ export function registerRecipeRoutes(app: FastifyInstance): void {
     },
   )
 
+  /**
+   * GET /api/tag-categories
+   * **五大固定分类字典**（code + 后端中文别名 + 未分类分组标题）。
+   *
+   * ⚠️ 前端必须用它渲染分类，**不得**另写一份中文分类字典。
+   * 200
+   */
+  app.get(
+    '/api/tag-categories',
+    { schema: { querystring: emptyQuerySchema } },
+    async (_request, reply) => {
+      return reply.code(200).send(listRecipeTagCategories())
+    },
+  )
+
   /* ============================================================
    * 批次 2：菜谱写入
    * ============================================================ */
@@ -262,14 +305,39 @@ export function registerRecipeRoutes(app: FastifyInstance): void {
 
   /**
    * POST /api/tags
-   * 新建 Tag。201 / 400 / 409
+   * 新建 Tag（可指定五大分类之一；省略 = 未分类）。201 / 400 / 409
+   *
+   * ⚠️ 返回体保持 `{ id }`，与 v0.2.2 兼容。
    */
-  app.post<{ Body: { name: string } }>(
+  app.post<{ Body: { name: string; category?: string | null } }>(
     '/api/tags',
     { schema: { body: tagBodySchema } },
     async (request, reply) => {
-      const id = createTag(request.body.name)
+      const id = createTag(request.body.name, request.body.category)
       return reply.code(201).send({ id })
+    },
+  )
+
+  /**
+   * PATCH /api/tags/:id
+   * 修改 Tag：重命名 / 改分类（部分更新）。204 / 400 / 404 / 409
+   *
+   * ⚠️ 菜谱关联按 `tag_id` 保存，改名不会断开关联。
+   * ⚠️ 系统预设同样可改；其结构语义由稳定 `code` 决定，不因改名而失效。
+   */
+  app.patch<{ Params: IdParams; Body: { name?: string; category?: string | null } }>(
+    '/api/tags/:id',
+    { schema: { body: tagUpdateBodySchema } },
+    async (request, reply) => {
+      const id = parsePositiveIntId(request.params.id)
+      if (id === null) {
+        return reply
+          .code(400)
+          .send(errorBody('VALIDATION_ERROR', `非法 ID：${request.params.id}。ID 必须是正整数`))
+      }
+
+      updateTag(id, request.body)
+      return reply.code(204).send()
     },
   )
 
@@ -288,6 +356,50 @@ export function registerRecipeRoutes(app: FastifyInstance): void {
     deleteTag(id)
     return reply.code(204).send()
   })
+
+  /* ============================================================
+   * v0.2.3：单菜偏好（点赞 / 点踩）
+   * ============================================================ */
+
+  /**
+   * GET /api/recipe-preferences
+   * 列出全部单菜偏好（按 recipe_id 升序）。200
+   *
+   * ⚠️ 单独提供接口，**不改动** `GET /api/recipes` 的返回结构（列表排序也不变）。
+   */
+  app.get(
+    '/api/recipe-preferences',
+    { schema: { querystring: emptyQuerySchema } },
+    async (_request, reply) => {
+      return reply.code(200).send(listPreferences())
+    },
+  )
+
+  /**
+   * PUT /api/recipes/:id/preference
+   * 设置 / 取消单道菜谱的偏好。200 / 400 / 404
+   *
+   * body: `{ "value": "like" | "dislike" | null }`
+   *   - `like` / `dislike` → 写入（同一菜谱最多一行）
+   *   - `null`             → **取消**（删除该行）
+   *
+   * ⚠️ 只影响推荐软评分：点赞软加权、点踩软降权，**绝不排除**菜谱。
+   */
+  app.put<{ Params: IdParams; Body: { value: 'like' | 'dislike' | null } }>(
+    '/api/recipes/:id/preference',
+    { schema: { body: preferenceBodySchema } },
+    async (request, reply) => {
+      const id = parsePositiveIntId(request.params.id)
+      if (id === null) {
+        return reply
+          .code(400)
+          .send(errorBody('VALIDATION_ERROR', `非法 ID：${request.params.id}。ID 必须是正整数`))
+      }
+
+      const result = setPreference(id, request.body.value)
+      return reply.code(200).send({ recipe_id: id, value: result?.value ?? null })
+    },
+  )
 
   /* ============================================================
    * 批次 3：菜谱列表设置

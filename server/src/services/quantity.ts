@@ -77,3 +77,33 @@ export function prepareQuantityForWrite(value: number): number {
 export function isValidQuantity(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
+
+/**
+ * **一条配料行按份数缩放后的需求量**（R1：推荐 / 预览 / 结算的唯一口径）。
+ *
+ * ```
+ * scaleLineQuantity(quantity, servings) =
+ *   quantity === null ? null : roundQuantity(quantity × servings)
+ * ```
+ *
+ * ⚠️⚠️ 为什么必须**先缩放、再舍入、然后才合并**：
+ *   旧实现里推荐侧是「先累加未舍入的 `quantity × servings`，再对累加结果舍入」，
+ *   而结算侧是「逐行 `roundQuantity` 后再求和」—— 两种舍入序列在 3 位小数下
+ *   会差 **0.001**，于是出现「推荐说 ready、结算却库存不足」。
+ *   例如两条同定义同单位的需求 `0.001` 与 `0.019`（`servings = 0.5`）、库存 `0.010`：
+ *     - 逐行舍入后求和：`0.001 + 0.010 = 0.011`（结算口径，必然需要 0.011）
+ *     - 累加后一次舍入：浮点尾差可能得到 `0.010`（推荐旧口径 → 误判 ready）
+ *   统一到本函数后，两边得到**同一个** `0.011`，且**与配料行顺序无关**
+ *   （每个加数都已是 3 位小数，任意顺序求和后再舍入都回到同一个值）。
+ *
+ * ⚠️ 本函数**不做单位换算**，也不引入 Decimal —— 保持项目既有的 3 位小数语义。
+ *
+ * @param quantity 菜谱原始用量（`null` = 未指定）
+ * @param servings 份数倍数（人数 ÷ 基准人数）
+ */
+export function scaleLineQuantity(
+  quantity: number | null,
+  servings: number,
+): number | null {
+  return quantity === null ? null : roundQuantity(quantity * servings)
+}

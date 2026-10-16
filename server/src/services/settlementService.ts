@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
 import {
@@ -19,10 +19,15 @@ import {
   sessionStateInvalidError,
   validationError,
 } from './errors.js'
-import { QUANTITY_EPSILON, prepareQuantityForWrite, roundQuantity } from './quantity.js'
-import { getSettings } from './settingsService.js'
-import { evaluateExpiryStatus } from './expiryStatusService.js'
-import { todayDateString } from './dates.js'
+import { QUANTITY_EPSILON, prepareQuantityForWrite, roundQuantity, scaleLineQuantity } from './quantity.js'
+import { availableStockRows, hasUnitMatchedLot } from './stockAvailability.js'
+import {
+  deriveRequiredReason,
+  isSatisfiedBy,
+  persistedReasonFor,
+} from './skipReasonService.js'
+import type { DerivedSkipReason } from './skipReasonService.js'
+import { isSeasoningDefinition } from './categoryService.js'
 
 /**
  * 烹饪会话结算 Service（v0.2.1 B3）。
@@ -42,7 +47,6 @@ import { todayDateString } from './dates.js'
 const TERMINAL_STATUSES = ['settled', 'abandoned'] as const
 
 /** 必需跳过项的原因（参与完整性判定） */
-const REQUIRED_SKIP_REASONS: readonly DishSkipReason[] = ['null_quantity', 'unit_mismatch']
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -154,8 +158,7 @@ function collectDemands(q: Queryable, sessionId: number): Demand[] {
         line_key: line.line_key,
         definition_id: line.definition_id,
         unit: line.unit,
-        quantity:
-          line.quantity === null ? null : roundQuantity(line.quantity * dish.servings),
+        quantity: scaleLineQuantity(line.quantity, dish.servings),
         confirmedReason:
           line.line_key === null ? null : (skipByLineKey.get(line.line_key) ?? null),
       })
@@ -175,93 +178,22 @@ function collectDemands(q: Queryable, sessionId: number): Demand[] {
  * ⚠️ 单位匹配只看**单位是否存在**，不看数量是否为 0
  *    （数量充足性由后续扣减阶段处理，两者不得混淆）。
  */
-function requiredReasonOf(q: Queryable, d: Demand): DishSkipReason | null {
-  if (d.quantity === null) return 'null_quantity'
-
-  if (d.unit === null) return 'unit_mismatch'
-
-  const matched = q
-    .select({ id: standardIngredient.id })
-    .from(standardIngredient)
-    .where(
-      and(
-        eq(standardIngredient.definition_id, d.definition_id),
-        eq(standardIngredient.unit, d.unit),
-      ),
-    )
-    .get()
-
-  return matched === undefined ? 'unit_mismatch' : null
+function requiredReasonOf(q: Queryable, d: Demand): DerivedSkipReason | null {
+  return deriveRequiredReason({
+    is_seasoning: isSeasoningDefinition(d.definition_id),
+    required_quantity: d.quantity,
+    has_unit_matched_lot: d.unit !== null && hasUnitMatchedLot(q, d.definition_id, d.unit),
+  })
 }
 
 /**
- * 按到期日优先取该食材的可用库存记录。
+ * 可用库存记录（含 **FEFO 排序**与过期策略）已提取到 `stockAvailability.ts`。
  *
- * 排序规则（沿用 `stockSortService` 的既有语义）：
- *   1. **有到期日的排在无到期日之前**（无期限信息不应优先消耗）
- *   2. 到期日升序（先消耗快过期的）
- *   3. id 升序（稳定 tie-breaker）
- *
- * ⚠️ 仅返回 `quantity > 0` 的记录（数量为 0 的无法提供任何扣减）。
- *
- * ⚠️⚠️ v0.2.2 修复：**默认排除已过期库存**。
- *
- *    此前这里只过滤 `quantity > 0`，而排序又让**最早到期（含已过期）**
- *    排在最前 —— 结果是：即使冰箱里有新鲜批次，结算也会**优先扣掉过期库存**，
- *    而且设置项 `allow_expired_for_recipe`（默认 false）**完全没被使用**。
- *    这与「推荐不将过期视作可用」直接矛盾，也会让用户吃下过期食材。
- *
- *    现在的行为（严格遵守既有设置项）：
- *      - `allow_expired_for_recipe === false`（**默认**）→ 过期批次**不参与扣减**；
- *      - `true` → 保留原语义（过期批次按到期日升序优先消耗）。
- *
- *    注意：若某需求**只能**由过期库存满足，默认设置下会扣减不足 →
- *    结算以 `INSUFFICIENT_STOCK` **显式失败并整体回滚**，
- *    绝不会静默吃掉过期食材。
+ * v0.2.3（R2）：结算扣减、结算预览、需求确认判定（`requiredReasonOf`）
+ * 与菜谱侧的必需跳过项计算（`cookingService.requiredSkipsOf`）
+ * **共用同一实现**，避免"预览说可扣、结算说不足"或"确认项算错"这类跨模块分歧。
+ * 规则见该文件顶部说明（同单位、`quantity > 0`、FEFO、默认排除过期）。
  */
-function availableStockRows(q: Queryable, definitionId: number, unit: string) {
-  const rows = q
-    .select()
-    .from(standardIngredient)
-    .where(
-      and(
-        eq(standardIngredient.definition_id, definitionId),
-        eq(standardIngredient.unit, unit),
-      ),
-    )
-    .orderBy(
-      sql`case when ${standardIngredient.expiry_date} is null then 1 else 0 end`,
-      asc(standardIngredient.expiry_date),
-      asc(standardIngredient.id),
-    )
-    .all()
-    .filter((r) => r.quantity > 0)
-
-  const settings = getSettings()
-  if (settings.allow_expired_for_recipe) {
-    // 用户显式允许用过期食材 → 保留既有排序（过期批次最先消耗）
-    return rows
-  }
-
-  const rule = {
-    mode: settings.expiry_warning_mode,
-    threshold: settings.expiry_warning_threshold,
-  }
-  const today = todayDateString()
-
-  return rows.filter((row) => {
-    const evaluation = evaluateExpiryStatus(
-      {
-        expiry_date: row.expiry_date,
-        purchase_date: row.purchase_date,
-        production_date: row.production_date,
-      },
-      rule,
-      today,
-    )
-    return evaluation.status !== 'expired'
-  })
-}
 
 /**
  * 跨多条库存记录扣减（到期日优先）。
@@ -388,10 +320,9 @@ export function settleSession(sessionId: number): SettlementResult {
       const required = requiredReasonOf(tx, d)
       if (required === null) continue
 
-      // 必须存在**针对该 line_key** 且 reason 属于必需类的确认记录
-      const satisfied =
-        d.confirmedReason !== null &&
-        (REQUIRED_SKIP_REASONS as readonly string[]).includes(d.confirmedReason)
+      // 必须存在**针对该 line_key** 且能真正满足该派生原因的确认记录
+      // （`seasoning_presence` 需要的是落库为 `user_choice` 的真实确认）
+      const satisfied = isSatisfiedBy(required, d.confirmedReason)
 
       if (!satisfied) {
         unconfirmed.push(
@@ -423,7 +354,15 @@ export function settleSession(sessionId: number): SettlementResult {
       let outcome: SettlementOutcome
       let consumed = 0
 
-      if (d.quantity === null) {
+      if (d.quantity !== null && d.quantity <= 0) {
+        /**
+         * v0.2.3（R8 结算侧）：**显式零需求**如实记为「已处理、0 扣减」。
+         *
+         * ⚠️ 不得落到下面 `unit === null → skipped_unit_mismatch` 的分支 ——
+         *    单位是否为空与"零需求"无关，误记会污染凭证语义。
+         */
+        outcome = 'consumed'
+      } else if (d.quantity === null) {
         outcome = 'skipped_null_quantity'
       } else if (d.confirmedReason === 'user_choice') {
         outcome = 'skipped_user'
@@ -523,13 +462,32 @@ export function previewSettlement(sessionId: number): {
     definition_name: string
     unit: string | null
     required_quantity: number | null
+    /**
+     * v0.2.3（R4）：处理到**这一行时**该 (食材, 单位) 的**剩余**可用总量
+     * （已经扣掉前面需求占用的部分）。
+     *
+     * ⚠️ 旧实现是"逐行都取全量可用"，于是两个需求各 2、库存 3 时**两条都显示可扣**，
+     *    实际结算第二条却会失败。
+     */
     available_quantity: number
-    required_reason: DishSkipReason | null
+    required_reason: DerivedSkipReason | null
+    /**
+     * 客户端确认时应**回传**的持久化原因。
+     *
+     * ⚠️ `seasoning_presence` 必须映射为既有的 `user_choice`（不新增 Schema 取值）。
+     */
+    confirm_reason: DishSkipReason | null
     confirmed: boolean
+    /** 本行在**真实顺序分配**之后是否确实能扣到所需量 */
     can_consume: boolean
+    /** 已确认跳过（`user_choice` / `null_quantity` / `unit_mismatch`）→ **不占用库存** */
+    skipped: boolean
   }>
   needing_confirmation: number
+  /** ⚠️ `ready` 的语义是「**待确认项为 0**」，**不是**「库存充足」 */
   ready: boolean
+  /** v0.2.3（R4）：所有会扣减的行**都真的能扣到**（即库存总量足够） */
+  stock_sufficient: boolean
 } {
   const session = db.select().from(cookingSession).where(eq(cookingSession.id, sessionId)).get()
   if (!session) {
@@ -537,6 +495,31 @@ export function previewSettlement(sessionId: number): {
   }
 
   const demands = collectDemands(db, sessionId)
+
+  /**
+   * v0.2.3（R4）：**库存副本**。
+   *
+   * ⚠️ 只用内存副本做分配，**绝不写库**（预览是只读接口）。
+   * ⚠️ 行来自 `availableStockRows`，因此与结算**同一套可用规则**
+   *    （默认排除过期、遵守 allow_expired_for_recipe、只看 quantity > 0），
+   *    并保持同一 FEFO 顺序（有到期在前 → 到期升序 → id 升序）。
+   */
+  const stockCopy = new Map<string, Array<{ id: number; quantity: number }>>()
+  function remainingRows(definitionId: number, unit: string) {
+    const key = `${definitionId}|${unit}`
+    let rows = stockCopy.get(key)
+    if (rows === undefined) {
+      rows = availableStockRows(db, definitionId, unit).map((r) => ({
+        id: r.id,
+        quantity: r.quantity,
+      }))
+      stockCopy.set(key, rows)
+    }
+    return rows
+  }
+  const totalOf = (rows: Array<{ quantity: number }>): number =>
+    rows.reduce((sum, r) => roundQuantity(sum + r.quantity), 0)
+
   const items: Array<{
     dish_id: number
     line_key: string | null
@@ -545,36 +528,70 @@ export function previewSettlement(sessionId: number): {
     unit: string | null
     required_quantity: number | null
     available_quantity: number
-    required_reason: DishSkipReason | null
+    required_reason: DerivedSkipReason | null
+    /**
+     * 客户端确认时应**回传**的持久化原因。
+     *
+     * ⚠️ `seasoning_presence` 必须映射为既有的 `user_choice`（不新增 Schema 取值）。
+     */
+    confirm_reason: DishSkipReason | null
     confirmed: boolean
     can_consume: boolean
+    skipped: boolean
   }> = []
 
   let needingConfirmation = 0
+  let stockSufficient = true
 
   for (const d of demands) {
     const requiredReason = requiredReasonOf(db, d)
 
-    const available = d.unit === null
-      ? 0
-      : // ⚠️⚠️ 必须复用**同一套可用库存规则**（条目⑫修复）：
-        //    此前这里直接 sum 全部库存，把**已过期批次**也算进"可扣"，
-        //    于是预览显示「100 过期 + 20 新鲜 = 120」，而实际结算只能扣 20 ——
-        //    预览虚报充足、与实际判定不一致。
-        //    现在与 settleSession 走同一个 `availableStockRows`：
-        //      · 默认排除已过期批次（遵守 allow_expired_for_recipe）
-        //      · 「今天正好到期」不算过期（evaluateExpiryStatus 语义）
-        //      · 只统计 quantity > 0 的记录
-        availableStockRows(db, d.definition_id, d.unit).reduce(
-          (sum, r) => roundQuantity(sum + r.quantity),
-          0,
-        )
-
-    const satisfied =
-      d.confirmedReason !== null &&
-      (REQUIRED_SKIP_REASONS as readonly string[]).includes(d.confirmedReason)
+    const satisfied = requiredReason !== null && isSatisfiedBy(requiredReason, d.confirmedReason)
 
     if (requiredReason !== null && !satisfied) needingConfirmation += 1
+
+    /**
+     * 结算会**跳过且不扣减**的情形 —— 必须与 `settleSession` 的判定完全一致：
+     *   - `quantity === null`      → `skipped_null_quantity`
+     *   - 已确认 `user_choice`     → `skipped_user`
+     *   - 已确认 `unit_mismatch`   → `skipped_unit_mismatch`
+     *   - 已确认 `null_quantity`   → `skipped_null_quantity`
+     */
+    const willSkip =
+      d.quantity === null ||
+      d.confirmedReason === 'user_choice' ||
+      d.confirmedReason === 'unit_mismatch' ||
+      d.confirmedReason === 'null_quantity'
+
+    let available = 0
+    let canConsume = false
+
+    /**
+     * v0.2.3（R8 边界）：**已知零需求**（含份数缩放为 0）不需要任何库存，
+     * 结算会如实记为 `consumed` 且扣减 0。因此这里必须 `can_consume = true`，
+     * 否则界面会把"零需求"显示成"库存不足"（单位恰好为 `null` 时尤其明显）。
+     */
+    const isZeroDemand = d.quantity !== null && d.quantity <= 0
+
+    if (isZeroDemand) {
+      canConsume = true
+    } else if (d.unit !== null) {
+      const rows = remainingRows(d.definition_id, d.unit)
+      available = totalOf(rows)
+
+      if (!willSkip && d.quantity !== null) {
+        // 按真实顺序 + FEFO 从副本里分配（与结算扣减同序）
+        let need = d.quantity
+        for (const row of rows) {
+          if (need <= QUANTITY_EPSILON) break
+          const take = Math.min(need, row.quantity)
+          row.quantity = roundQuantity(row.quantity - take)
+          need = roundQuantity(need - take)
+        }
+        canConsume = available + QUANTITY_EPSILON >= d.quantity
+        if (!canConsume) stockSufficient = false
+      }
+    }
 
     const definitionRow = db
       .select({ name: ingredientDefinition.name })
@@ -591,11 +608,10 @@ export function previewSettlement(sessionId: number): {
       required_quantity: d.quantity,
       available_quantity: available,
       required_reason: requiredReason,
+      confirm_reason: requiredReason === null ? null : persistedReasonFor(requiredReason),
       confirmed: satisfied,
-      can_consume:
-        requiredReason === null &&
-        d.quantity !== null &&
-        available + QUANTITY_EPSILON >= d.quantity,
+      can_consume: canConsume,
+      skipped: willSkip,
     })
   }
 
@@ -605,5 +621,6 @@ export function previewSettlement(sessionId: number): {
     items,
     needing_confirmation: needingConfirmation,
     ready: needingConfirmation === 0,
+    stock_sufficient: stockSufficient,
   }
 }

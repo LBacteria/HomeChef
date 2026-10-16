@@ -1,19 +1,34 @@
 import { request } from './definitions'
-import type { ApplyPlanResult, MealPlanResult } from '../types/api'
+import type { ApplyPlanResult, MealPlanResult, RecipeTagMode } from '../types/api'
 
 /**
- * v0.2.2 整餐推荐 API。
+ * v0.2.2 整餐推荐 API（v0.2.3 增补标签筛选）。
  *
  * ⚠️ 后端是唯一权威：
  *    - 分数、需求数量、缺口、份数倍率全部由服务端计算，前端只负责展示；
  *    - 前端**不自行推算**缺口，也不得把本地算出的数量回传。
  */
 
-/** 生成整餐推荐（纯读接口，不会写库） */
-export function getMealPlans(people: number): Promise<MealPlanResult> {
+/**
+ * 生成整餐推荐（纯读接口，不会写库）。
+ *
+ * v0.2.3：可按 Tag 筛选参与推荐的菜谱（AND / OR）。
+ * ⚠️ 筛选条件变化后，**此前拿到的方案必须作废并重新生成** ——
+ *    旧方案的 `snapshot_id` 对应的菜谱集合已经不同了。
+ */
+export function getMealPlans(
+  people: number,
+  tags: string[] = [],
+  tagMode: RecipeTagMode = 'and',
+): Promise<MealPlanResult> {
+  const body: { people: number; tags?: string[]; tag_mode?: RecipeTagMode } = { people }
+  if (tags.length > 0) {
+    body.tags = tags
+    body.tag_mode = tagMode
+  }
   return request<MealPlanResult>('/recommendation/meal-plans', {
     method: 'POST',
-    body: JSON.stringify({ people }),
+    body: JSON.stringify(body),
   })
 }
 

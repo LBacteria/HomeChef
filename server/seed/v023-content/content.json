@@ -1,0 +1,3782 @@
+{
+  "_comment": "HomeChef v0.2.3 菜谱/食材内容包（纯新增）。由 30 道家常菜的来源清单整理；servings_note 说明份量为两人份家庭参考量。",
+  "version": "v023-content-1",
+  "generated_at": "2026-10-16",
+  "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+  "source_check_note": "每条来源均已联网抓取页面核对：HTTP 可达、页面标题与菜名一致、食材明细逐条比对；步骤正文为自行改写，未复制原文。 【DSH 2026-10-16】已移除无营养核定的特征标签（高蛋白/低脂/高纤维 等），保留类型/口味/工艺/场景/快手。",
+  "ingredients": [
+    {
+      "name": "番茄",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "西红柿"
+      ]
+    },
+    {
+      "name": "鸡蛋",
+      "category": "蛋类",
+      "allowed_units": [
+        "个",
+        "盒",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "蛋"
+      ]
+    },
+    {
+      "name": "盐",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "食盐"
+      ]
+    },
+    {
+      "name": "鸡精",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "味精"
+      ]
+    },
+    {
+      "name": "料酒",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "黄酒"
+      ]
+    },
+    {
+      "name": "醋",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升",
+        "升"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "陈醋",
+        "香醋"
+      ]
+    },
+    {
+      "name": "西兰花",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "绿花菜"
+      ]
+    },
+    {
+      "name": "大蒜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 60,
+      "aliases": [
+        "蒜",
+        "蒜头"
+      ]
+    },
+    {
+      "name": "白糖",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "砂糖"
+      ]
+    },
+    {
+      "name": "西葫芦",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "角瓜"
+      ]
+    },
+    {
+      "name": "猪里脊",
+      "category": "猪肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "里脊肉"
+      ]
+    },
+    {
+      "name": "青椒",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "柿子椒"
+      ]
+    },
+    {
+      "name": "花椒",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": []
+    },
+    {
+      "name": "姜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "个"
+      ],
+      "estimated_shelf_life_days": 60,
+      "aliases": [
+        "生姜"
+      ]
+    },
+    {
+      "name": "生抽",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升",
+        "升"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "酱油"
+      ]
+    },
+    {
+      "name": "淀粉",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "生粉"
+      ]
+    },
+    {
+      "name": "鸡翅",
+      "category": "鸡肉",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": [
+        "鸡翅膀"
+      ]
+    },
+    {
+      "name": "可乐",
+      "category": "其他/饮品",
+      "allowed_units": [
+        "瓶",
+        "罐",
+        "毫升",
+        "升"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "小葱",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "葱",
+        "香葱"
+      ]
+    },
+    {
+      "name": "八角",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "大料"
+      ]
+    },
+    {
+      "name": "牛腩",
+      "category": "牛肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": []
+    },
+    {
+      "name": "土豆",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "马铃薯",
+        "洋芋"
+      ]
+    },
+    {
+      "name": "洋葱",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "圆葱"
+      ]
+    },
+    {
+      "name": "胡萝卜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "红萝卜"
+      ]
+    },
+    {
+      "name": "老抽",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": []
+    },
+    {
+      "name": "鸡腿",
+      "category": "鸡肉",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": [
+        "鸡腿肉"
+      ]
+    },
+    {
+      "name": "香菇",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "盒"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "鲜香菇"
+      ]
+    },
+    {
+      "name": "蚝油",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": []
+    },
+    {
+      "name": "嫩豆腐",
+      "category": "豆制品",
+      "allowed_units": [
+        "盒",
+        "克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "内酯豆腐"
+      ]
+    },
+    {
+      "name": "猪肉馅",
+      "category": "猪肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "肉末",
+        "猪肉末"
+      ]
+    },
+    {
+      "name": "虾仁",
+      "category": "水产",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "豆瓣酱",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "瓶",
+        "罐",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "郫县豆瓣"
+      ]
+    },
+    {
+      "name": "花生油",
+      "category": "调味品",
+      "allowed_units": [
+        "升",
+        "毫升",
+        "瓶"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": []
+    },
+    {
+      "name": "豆腐",
+      "category": "豆制品",
+      "allowed_units": [
+        "个",
+        "克",
+        "盒"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "老豆腐"
+      ]
+    },
+    {
+      "name": "木耳",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "黑木耳"
+      ]
+    },
+    {
+      "name": "鲈鱼",
+      "category": "水产",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": []
+    },
+    {
+      "name": "鸡胸肉",
+      "category": "鸡肉",
+      "allowed_units": [
+        "克",
+        "千克",
+        "个"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": [
+        "鸡胸"
+      ]
+    },
+    {
+      "name": "生菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "叶生菜"
+      ]
+    },
+    {
+      "name": "猪肋排",
+      "category": "猪肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "排骨",
+        "肋排"
+      ]
+    },
+    {
+      "name": "冬瓜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": []
+    },
+    {
+      "name": "枸杞",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "红枣",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "大枣"
+      ]
+    },
+    {
+      "name": "桂皮",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": []
+    },
+    {
+      "name": "香菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "芫荽"
+      ]
+    },
+    {
+      "name": "胡椒粉",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "袋",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "黑胡椒"
+      ]
+    },
+    {
+      "name": "玉米",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "甜玉米"
+      ]
+    },
+    {
+      "name": "紫菜",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "虾皮",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "黄瓜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "青瓜"
+      ]
+    },
+    {
+      "name": "辣椒",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "尖椒"
+      ]
+    },
+    {
+      "name": "香油",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "芝麻油"
+      ]
+    },
+    {
+      "name": "辣椒油",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "红油"
+      ]
+    },
+    {
+      "name": "米醋",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": []
+    },
+    {
+      "name": "豆干",
+      "category": "豆制品",
+      "allowed_units": [
+        "克",
+        "袋",
+        "盒"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "香干"
+      ]
+    },
+    {
+      "name": "芹菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": []
+    },
+    {
+      "name": "五香粉",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": []
+    },
+    {
+      "name": "面条",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "挂面"
+      ]
+    },
+    {
+      "name": "小米",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "千克",
+        "克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "南瓜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": []
+    },
+    {
+      "name": "大米",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "千克",
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "米"
+      ]
+    },
+    {
+      "name": "面粉",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "千克",
+        "克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "小麦粉"
+      ]
+    },
+    {
+      "name": "圆白菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "卷心菜",
+        "包菜"
+      ]
+    },
+    {
+      "name": "茄子",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": []
+    },
+    {
+      "name": "白萝卜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "萝卜"
+      ]
+    },
+    {
+      "name": "菜花",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "花菜",
+        "白花菜"
+      ]
+    },
+    {
+      "name": "菠菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": []
+    },
+    {
+      "name": "小白菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "青菜"
+      ]
+    },
+    {
+      "name": "大白菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "白菜"
+      ]
+    },
+    {
+      "name": "韭菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": []
+    },
+    {
+      "name": "豆芽",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "黄豆芽"
+      ]
+    },
+    {
+      "name": "四季豆",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "豆角"
+      ]
+    },
+    {
+      "name": "莲藕",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "藕"
+      ]
+    },
+    {
+      "name": "山药",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "个"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "淮山"
+      ]
+    },
+    {
+      "name": "丝瓜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": []
+    },
+    {
+      "name": "苦瓜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "凉瓜"
+      ]
+    },
+    {
+      "name": "金针菇",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": []
+    },
+    {
+      "name": "平菇",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": []
+    },
+    {
+      "name": "五花肉",
+      "category": "猪肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "三层肉"
+      ]
+    },
+    {
+      "name": "猪腿肉",
+      "category": "猪肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "后腿肉"
+      ]
+    },
+    {
+      "name": "香肠",
+      "category": "猪肉",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "腊肠"
+      ]
+    },
+    {
+      "name": "火腿",
+      "category": "猪肉",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 90,
+      "aliases": [
+        "火腿肠"
+      ]
+    },
+    {
+      "name": "牛里脊",
+      "category": "牛肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "牛柳"
+      ]
+    },
+    {
+      "name": "牛腱子",
+      "category": "牛肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "牛腱"
+      ]
+    },
+    {
+      "name": "牛肉馅",
+      "category": "牛肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": [
+        "牛肉末"
+      ]
+    },
+    {
+      "name": "肥牛卷",
+      "category": "牛肉",
+      "allowed_units": [
+        "克",
+        "千克",
+        "盒"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "肥牛"
+      ]
+    },
+    {
+      "name": "羊排",
+      "category": "羊肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": []
+    },
+    {
+      "name": "羊腿肉",
+      "category": "羊肉",
+      "allowed_units": [
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": []
+    },
+    {
+      "name": "整鸡",
+      "category": "鸡肉",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": [
+        "三黄鸡"
+      ]
+    },
+    {
+      "name": "鸡爪",
+      "category": "鸡肉",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "凤爪"
+      ]
+    },
+    {
+      "name": "鸭腿",
+      "category": "鸭肉",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": []
+    },
+    {
+      "name": "草鱼",
+      "category": "水产",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": [
+        "鲩鱼"
+      ]
+    },
+    {
+      "name": "鲫鱼",
+      "category": "水产",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": []
+    },
+    {
+      "name": "三文鱼",
+      "category": "水产",
+      "allowed_units": [
+        "克",
+        "千克",
+        "盒"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": [
+        "鲑鱼"
+      ]
+    },
+    {
+      "name": "带鱼",
+      "category": "水产",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "基围虾",
+      "category": "水产",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": []
+    },
+    {
+      "name": "蛤蜊",
+      "category": "水产",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 2,
+      "aliases": [
+        "花蛤"
+      ]
+    },
+    {
+      "name": "腐竹",
+      "category": "豆制品",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "千张",
+      "category": "豆制品",
+      "allowed_units": [
+        "克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "豆腐皮"
+      ]
+    },
+    {
+      "name": "黄豆",
+      "category": "豆制品",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "大豆"
+      ]
+    },
+    {
+      "name": "红豆",
+      "category": "豆制品",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "赤豆"
+      ]
+    },
+    {
+      "name": "牛奶",
+      "category": "乳制品",
+      "allowed_units": [
+        "毫升",
+        "升",
+        "瓶",
+        "盒"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "鲜奶"
+      ]
+    },
+    {
+      "name": "酸奶",
+      "category": "乳制品",
+      "allowed_units": [
+        "毫升",
+        "盒",
+        "瓶",
+        "罐"
+      ],
+      "estimated_shelf_life_days": 14,
+      "aliases": []
+    },
+    {
+      "name": "黄油",
+      "category": "乳制品",
+      "allowed_units": [
+        "克",
+        "盒"
+      ],
+      "estimated_shelf_life_days": 90,
+      "aliases": [
+        "奶油"
+      ]
+    },
+    {
+      "name": "奶酪",
+      "category": "乳制品",
+      "allowed_units": [
+        "克",
+        "盒",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "芝士"
+      ]
+    },
+    {
+      "name": "糯米",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "千克",
+        "克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "江米"
+      ]
+    },
+    {
+      "name": "粉丝",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "馒头",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "个",
+        "袋",
+        "克"
+      ],
+      "estimated_shelf_life_days": 3,
+      "aliases": []
+    },
+    {
+      "name": "面包",
+      "category": "主食/谷物",
+      "allowed_units": [
+        "个",
+        "袋",
+        "克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": [
+        "吐司"
+      ]
+    },
+    {
+      "name": "干香菇",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "干木耳",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "银耳",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "白木耳"
+      ]
+    },
+    {
+      "name": "海带",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "黄花菜",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": [
+        "金针菜"
+      ]
+    },
+    {
+      "name": "莲子",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": 180,
+      "aliases": []
+    },
+    {
+      "name": "苹果",
+      "category": "水果",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": []
+    },
+    {
+      "name": "香蕉",
+      "category": "水果",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": []
+    },
+    {
+      "name": "橙子",
+      "category": "水果",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": [
+        "甜橙"
+      ]
+    },
+    {
+      "name": "柠檬",
+      "category": "水果",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 30,
+      "aliases": []
+    },
+    {
+      "name": "西瓜",
+      "category": "水果",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": []
+    },
+    {
+      "name": "芒果",
+      "category": "水果",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": 7,
+      "aliases": []
+    },
+    {
+      "name": "咖喱",
+      "category": "调味品",
+      "allowed_units": [
+        "盒",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "咖喱块"
+      ]
+    },
+    {
+      "name": "芝麻酱",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "罐",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "麻酱"
+      ]
+    },
+    {
+      "name": "蜂蜜",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "罐",
+        "克"
+      ],
+      "estimated_shelf_life_days": 730,
+      "aliases": []
+    },
+    {
+      "name": "番茄酱",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "袋",
+        "克"
+      ],
+      "estimated_shelf_life_days": 365,
+      "aliases": [
+        "番茄沙司"
+      ]
+    },
+    {
+      "name": "食用油",
+      "category": "调味品",
+      "allowed_units": [
+        "升",
+        "毫升",
+        "瓶"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": [
+        "植物油"
+      ]
+    },
+    {
+      "name": "大葱",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "个"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": []
+    },
+    {
+      "name": "豆豉",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": []
+    },
+    {
+      "name": "花椒粉",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": []
+    },
+    {
+      "name": "孜然",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": [
+        "孜然粉"
+      ]
+    },
+    {
+      "name": "白芝麻",
+      "category": "干货/菌菇",
+      "allowed_units": [
+        "克",
+        "袋",
+        "包"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": [
+        "芝麻"
+      ]
+    },
+    {
+      "name": "白醋",
+      "category": "调味品",
+      "allowed_units": [
+        "瓶",
+        "毫升",
+        "升"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": []
+    },
+    {
+      "name": "干辣椒",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "包",
+        "克"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": [
+        "干红辣椒"
+      ]
+    },
+    {
+      "name": "小米椒",
+      "category": "蔬菜",
+      "allowed_units": [
+        "个",
+        "克",
+        "千克"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": [
+        "小米辣"
+      ]
+    },
+    {
+      "name": "泡椒",
+      "category": "调味品",
+      "allowed_units": [
+        "袋",
+        "瓶",
+        "克"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": [
+        "泡辣椒"
+      ]
+    },
+    {
+      "name": "油麦菜",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": []
+    },
+    {
+      "name": "菜心",
+      "category": "蔬菜",
+      "allowed_units": [
+        "克",
+        "千克",
+        "袋"
+      ],
+      "estimated_shelf_life_days": null,
+      "aliases": []
+    }
+  ],
+  "recipes": [
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "番茄炒鸡蛋",
+      "source_url": "https://home.meishichina.com/recipe-70001.html",
+      "verified": true,
+      "note": "来源为美食天下「番茄炒鸡蛋」，主料番茄+鸡蛋；原方用量为「适量」，本份量按两人份整理。",
+      "tags": [
+        "素菜",
+        "酸甜",
+        "炒",
+        "快手菜",
+        "午餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "番茄",
+          "quantity": 300,
+          "unit": "克",
+          "note": "洗净切块"
+        },
+        {
+          "definition": "鸡蛋",
+          "quantity": 3,
+          "unit": "个",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": "打蛋时加"
+        },
+        {
+          "definition": "醋",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": "原方为香醋"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "番茄切块，鸡蛋打散加料酒和少许盐。",
+        "热锅倒油，蛋液下锅炒至凝固盛出。",
+        "锅里留油下番茄，中火炒出汁水。",
+        "加盐、鸡精、醋调味，倒回鸡蛋炒匀出锅。"
+      ],
+      "synonyms": [
+        "西红柿炒鸡蛋",
+        "番茄炒蛋",
+        "西红柿炒蛋"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "蒜蓉西兰花",
+      "source_url": "https://m.meishichina.com/recipe/244955/",
+      "verified": true,
+      "note": "来源为美食天下手机版「蒜蓉西兰花」，食材为西兰花+大蒜头，调味植物油/盐/鸡精/白砂糖。",
+      "tags": [
+        "素菜",
+        "蒜香",
+        "清淡",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "西兰花",
+          "quantity": 400,
+          "unit": "克",
+          "note": "拆小朵"
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 10,
+          "unit": "克",
+          "note": "切末"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方为植物油"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "白糖",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方白砂糖"
+        }
+      ],
+      "steps": [
+        "西兰花拆小朵，盐水泡十分钟后冲净。",
+        "水开加少许油，西兰花焯两分钟捞出。",
+        "热锅倒油，下蒜末小火炒香。",
+        "倒入西兰花大火翻炒，加盐、糖、鸡精炒匀出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "清炒西葫芦",
+      "source_url": "https://home.meishichina.com/recipe-60974.html",
+      "verified": true,
+      "note": "来源为美食天下「清炒西葫芦」，主料西葫芦 500g，辅料盐、油。",
+      "tags": [
+        "素菜",
+        "清淡",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "西葫芦",
+          "quantity": 500,
+          "unit": "克",
+          "note": "切片"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方为油"
+        }
+      ],
+      "steps": [
+        "西葫芦洗净切薄片。",
+        "热锅倒油，下西葫芦大火快炒。",
+        "炒至边缘变软透明，加盐调味即可出锅。"
+      ],
+      "synonyms": [
+        "炒西葫芦"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "青椒肉丝",
+      "source_url": "https://home.meishichina.com/recipe-93695.html",
+      "verified": true,
+      "note": "来源为美食天下「青椒肉丝」，主料瘦肉+青椒，原方用量为「适量」，此处按两人份整理。",
+      "tags": [
+        "半荤半素",
+        "咸鲜",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "猪里脊",
+          "quantity": 200,
+          "unit": "克",
+          "note": "原方为瘦肉，切丝"
+        },
+        {
+          "definition": "青椒",
+          "quantity": 200,
+          "unit": "克",
+          "note": "切丝"
+        },
+        {
+          "definition": "花椒",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "生抽",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 5,
+          "unit": "克",
+          "note": "肉丝上浆"
+        }
+      ],
+      "steps": [
+        "肉丝加淀粉、料酒、生抽抓匀腌十分钟。",
+        "热锅倒油，肉丝滑散至变色盛出。",
+        "下姜、蒜、花椒炒香，倒青椒丝大火炒断生。",
+        "肉丝回锅，加盐和鸡精炒匀出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "可乐鸡翅",
+      "source_url": "https://home.meishichina.com/recipe-307491.html",
+      "verified": true,
+      "note": "来源为美食天下「可乐鸡翅」，主料鸡翅 7 个、可乐，辅料姜葱八角料酒等。",
+      "tags": [
+        "荤菜",
+        "咸鲜",
+        "焖",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "鸡翅",
+          "quantity": 7,
+          "unit": "个",
+          "note": "两面划刀"
+        },
+        {
+          "definition": "可乐",
+          "quantity": 330,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方生姜 2 片"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": "葱段"
+        },
+        {
+          "definition": "八角",
+          "quantity": 1,
+          "unit": "个",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 30,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "生抽",
+          "quantity": 8,
+          "unit": "毫升",
+          "note": "原方为酱油半汤匙"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方植物油 2 汤匙"
+        }
+      ],
+      "steps": [
+        "鸡翅划刀，冷水下锅加料酒焯水后擦干。",
+        "热锅倒油，鸡翅煎至两面金黄。",
+        "下姜、葱、八角炒香，倒入可乐没过鸡翅。",
+        "加生抽和盐，中小火焖十五分钟。",
+        "大火收汁，汤汁浓稠裹住鸡翅即可。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "土豆炖牛肉",
+      "source_url": "https://home.meishichina.com/recipe-425979.html",
+      "verified": true,
+      "note": "来源为美食天下「土豆炖牛肉」，原方牛肉 2 斤等为多人份，此处按两人份折算；牛腩为牛肉中适合炖的部位。",
+      "tags": [
+        "荤菜",
+        "咸鲜",
+        "炖",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "牛腩",
+          "quantity": 500,
+          "unit": "克",
+          "note": "原方为牛肉，切块"
+        },
+        {
+          "definition": "土豆",
+          "quantity": 300,
+          "unit": "克",
+          "note": "切滚刀块"
+        },
+        {
+          "definition": "洋葱",
+          "quantity": 200,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "胡萝卜",
+          "quantity": 100,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "大葱",
+          "quantity": 20,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "姜",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "老抽",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "白醋",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": "帮助肉质酥烂"
+        },
+        {
+          "definition": "白糖",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方白砂糖"
+        },
+        {
+          "definition": "盐",
+          "quantity": 4,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "牛肉切块冷水下锅，加料酒焯净血沫捞出。",
+        "热锅倒油，下葱姜、洋葱炒香，放牛肉翻炒。",
+        "加老抽、白糖、白醋炒上色，添热水没过肉。",
+        "小火炖四十分钟，放土豆和胡萝卜再炖二十分钟。",
+        "加盐调味，大火收浓汤汁即可。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "香菇滑鸡",
+      "source_url": "https://home.meishichina.com/recipe-541623.html",
+      "verified": true,
+      "note": "来源为美食天下「香菇滑鸡」，原方使用市售浓缩调味料（红99），此处改用蚝油、生抽、糖等常用调味品替代。",
+      "tags": [
+        "半荤半素",
+        "咸鲜",
+        "焖",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "鸡腿",
+          "quantity": 400,
+          "unit": "克",
+          "note": "原方为鸡肉，去骨切块"
+        },
+        {
+          "definition": "香菇",
+          "quantity": 150,
+          "unit": "克",
+          "note": "泡软切片"
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 10,
+          "unit": "克",
+          "note": "腌鸡上浆"
+        },
+        {
+          "definition": "白糖",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "蚝油",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "生抽",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "鸡块加淀粉、生抽抓匀腌十五分钟。",
+        "热锅倒油，下姜片和鸡块煎炒至变色。",
+        "放香菇翻炒，加蚝油、糖和少量热水。",
+        "盖盖焖八分钟，撒葱花收汁出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "麻婆豆腐",
+      "source_url": "https://home.meishichina.com/recipe-97145.html",
+      "verified": true,
+      "note": "来源为美食天下「麻婆豆腐」，含南豆腐、猪肉、虾仁、郫县豆瓣、豆豉等；南豆腐对应嫩豆腐，原方鸡汤以清水替代。",
+      "tags": [
+        "半荤半素",
+        "麻辣",
+        "辣",
+        "炒",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "嫩豆腐",
+          "quantity": 500,
+          "unit": "克",
+          "note": "原方南豆腐，切块"
+        },
+        {
+          "definition": "猪肉馅",
+          "quantity": 100,
+          "unit": "克",
+          "note": "原方猪肉"
+        },
+        {
+          "definition": "虾仁",
+          "quantity": 50,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 30,
+          "unit": "克",
+          "note": "原方大蒜 8 瓣"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 30,
+          "unit": "克",
+          "note": "原方青蒜，可用小葱"
+        },
+        {
+          "definition": "豆瓣酱",
+          "quantity": 30,
+          "unit": "克",
+          "note": "原方郫县豆瓣 2 大勺"
+        },
+        {
+          "definition": "豆豉",
+          "quantity": 15,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 20,
+          "unit": "毫升",
+          "note": "原方黄酒"
+        },
+        {
+          "definition": "生抽",
+          "quantity": 20,
+          "unit": "毫升",
+          "note": "原方酱油"
+        },
+        {
+          "definition": "花生油",
+          "quantity": 20,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 10,
+          "unit": "克",
+          "note": "调水淀粉勾芡"
+        },
+        {
+          "definition": "花椒粉",
+          "quantity": 3,
+          "unit": "克",
+          "note": "出锅撒"
+        }
+      ],
+      "steps": [
+        "豆腐切块，淡盐水中浸五分钟沥干。",
+        "热锅倒油，肉馅炒散，加豆瓣酱、豆豉炒出红油。",
+        "下蒜末炒香，加料酒、生抽和一小碗清水烧开。",
+        "轻轻推入豆腐和虾仁，小火煨三分钟。",
+        "淋水淀粉勾芡，撒花椒粉和葱花出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "家常豆腐",
+      "source_url": "https://home.meishichina.com/recipe-16611.html",
+      "verified": true,
+      "note": "来源为美食天下「家常豆腐（川版）」，豆腐+猪肉+尖椒+木耳+胡萝卜+郫县豆瓣酱。",
+      "tags": [
+        "半荤半素",
+        "咸鲜",
+        "炒",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "豆腐",
+          "quantity": 400,
+          "unit": "克",
+          "note": "切片煎制"
+        },
+        {
+          "definition": "猪肉馅",
+          "quantity": 100,
+          "unit": "克",
+          "note": "原方猪肉"
+        },
+        {
+          "definition": "青椒",
+          "quantity": 50,
+          "unit": "克",
+          "note": "原方尖椒"
+        },
+        {
+          "definition": "木耳",
+          "quantity": 30,
+          "unit": "克",
+          "note": "泡发"
+        },
+        {
+          "definition": "胡萝卜",
+          "quantity": 50,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "豆瓣酱",
+          "quantity": 20,
+          "unit": "克",
+          "note": "原方郫县豆瓣酱"
+        },
+        {
+          "definition": "盐",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "老抽",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 5,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "白糖",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方糖"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "豆腐切片，平底锅煎至两面金黄盛出。",
+        "热锅倒油，肉馅炒散，加豆瓣酱、葱姜蒜炒香。",
+        "放胡萝卜、木耳、青椒翻炒，加少量水烧开。",
+        "倒入豆腐，加老抽、糖、盐烧两分钟。",
+        "水淀粉勾芡，加鸡精炒匀出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "清蒸鲈鱼",
+      "source_url": "https://home.meishichina.com/recipe-220959.html",
+      "verified": true,
+      "note": "来源为美食天下「清蒸鲈鱼—私房做法」，主料鲈鱼 750 克；原方调味汁用料较重，此处按家常蒸鱼简化。",
+      "tags": [
+        "荤菜",
+        "清淡",
+        "蒸",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "鲈鱼",
+          "quantity": 750,
+          "unit": "克",
+          "note": "处理干净"
+        },
+        {
+          "definition": "姜",
+          "quantity": 20,
+          "unit": "克",
+          "note": "切丝"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 30,
+          "unit": "克",
+          "note": "切段"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": "腌鱼"
+        },
+        {
+          "definition": "料酒",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "腌鱼"
+        },
+        {
+          "definition": "生抽",
+          "quantity": 20,
+          "unit": "毫升",
+          "note": "调汁"
+        },
+        {
+          "definition": "醋",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": "调汁"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 20,
+          "unit": "毫升",
+          "note": "最后淋热油"
+        }
+      ],
+      "steps": [
+        "鲈鱼两面划刀，抹盐和料酒腌十分钟。",
+        "鱼身铺姜丝，水开后大火蒸八分钟。",
+        "取出倒掉盘中汤水，铺上葱段。",
+        "淋生抽和醋，浇一勺烧热的油即可。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "香煎鸡胸肉",
+      "source_url": "https://m.meishichina.com/recipe/534320/",
+      "verified": true,
+      "note": "来源为美食天下手机版「香煎鸡胸肉」，调料含老抽、生抽、料酒、烧烤料、孜然、白芝麻；市售烧烤料以孜然等香料替代。",
+      "tags": [
+        "荤菜",
+        "煎",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "鸡胸肉",
+          "quantity": 300,
+          "unit": "克",
+          "note": "切丁"
+        },
+        {
+          "definition": "胡萝卜",
+          "quantity": 50,
+          "unit": "克",
+          "note": "配菜"
+        },
+        {
+          "definition": "生菜",
+          "quantity": 50,
+          "unit": "克",
+          "note": "配菜"
+        },
+        {
+          "definition": "老抽",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "生抽",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "孜然",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "白芝麻",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "食用油",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": "原方为油"
+        }
+      ],
+      "steps": [
+        "鸡胸肉切丁，加老抽、生抽、料酒腌十五分钟。",
+        "平底锅倒油烧热，下鸡丁连同料汁翻炒。",
+        "炒至表面微焦，撒孜然和白芝麻炒匀。",
+        "与生菜、胡萝卜丝一起装盘。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "冬瓜排骨汤",
+      "source_url": "https://home.meishichina.com/recipe-329446.html",
+      "verified": true,
+      "note": "来源为美食天下「冬瓜排骨汤」，原方排骨 1000g 为多人份，此处按两人份折算；干茴香枝等不常见香料未列入。",
+      "tags": [
+        "汤",
+        "清淡",
+        "煲",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "猪肋排",
+          "quantity": 500,
+          "unit": "克",
+          "note": "原方猪排骨"
+        },
+        {
+          "definition": "冬瓜",
+          "quantity": 400,
+          "unit": "克",
+          "note": "去皮切块"
+        },
+        {
+          "definition": "姜",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "八角",
+          "quantity": 1,
+          "unit": "个",
+          "note": "原方大料"
+        },
+        {
+          "definition": "白醋",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "枸杞",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方 5 颗"
+        },
+        {
+          "definition": "红枣",
+          "quantity": 3,
+          "unit": "个",
+          "note": "原方大枣 3 颗"
+        },
+        {
+          "definition": "花椒",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "桂皮",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "香菜",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "胡椒粉",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 4,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "排骨冷水下锅，加料酒焯去血沫洗净。",
+        "排骨加足量热水，放姜、八角、桂皮、花椒和白醋。",
+        "大火烧开转小火煲四十分钟。",
+        "放冬瓜、红枣、枸杞再煮十五分钟。",
+        "加盐和胡椒粉，撒葱花香菜即可。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "玉米排骨汤",
+      "source_url": "https://home.meishichina.com/recipe-99724.html",
+      "verified": true,
+      "note": "来源为美食天下「玉米排骨汤」，猪排骨 500 克、玉米 200 克、胡萝卜 100 克。",
+      "tags": [
+        "汤",
+        "清淡",
+        "煲",
+        "午餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "猪肋排",
+          "quantity": 500,
+          "unit": "克",
+          "note": "原方猪排骨"
+        },
+        {
+          "definition": "玉米",
+          "quantity": 200,
+          "unit": "克",
+          "note": "切段"
+        },
+        {
+          "definition": "胡萝卜",
+          "quantity": 100,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 4,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "料酒",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "白醋",
+          "quantity": 3,
+          "unit": "毫升",
+          "note": "原方 3—4 滴"
+        }
+      ],
+      "steps": [
+        "排骨焯水洗净，玉米胡萝卜切段。",
+        "全部食材入锅，加足量热水和料酒、白醋。",
+        "大火烧开转小火炖五十分钟。",
+        "出锅前加盐调味。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "紫菜蛋花汤",
+      "source_url": "https://home.meishichina.com/recipe-34843.html",
+      "verified": true,
+      "note": "来源为美食天下「紫菜蛋花汤」，鸡蛋+紫菜+西红柿，辅料干淀粉、盐、胡椒粉。",
+      "tags": [
+        "汤",
+        "清淡",
+        "煮",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "鸡蛋",
+          "quantity": 2,
+          "unit": "个",
+          "note": "打散"
+        },
+        {
+          "definition": "紫菜",
+          "quantity": 5,
+          "unit": "克",
+          "note": "撕小片"
+        },
+        {
+          "definition": "番茄",
+          "quantity": 150,
+          "unit": "克",
+          "note": "原方西红柿"
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方干淀粉"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "胡椒粉",
+          "quantity": 1,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "番茄切丁，紫菜撕小片。",
+        "锅中加水烧开，放番茄煮两分钟。",
+        "淀粉加水调匀倒入，再次煮开。",
+        "淋入蛋液划散成蛋花，放紫菜、盐和胡椒粉关火。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "冬瓜虾皮汤",
+      "source_url": "https://home.meishichina.com/recipe-405641.html",
+      "verified": true,
+      "note": "来源为美食天下「冬瓜虾皮汤」，主料冬瓜、虾皮、葱、嫩姜。",
+      "tags": [
+        "汤",
+        "清淡",
+        "煮"
+      ],
+      "ingredients": [
+        {
+          "definition": "冬瓜",
+          "quantity": 300,
+          "unit": "克",
+          "note": "切片"
+        },
+        {
+          "definition": "虾皮",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方葱"
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方嫩姜"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": "原方油"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "冬瓜去皮切片，虾皮冲洗一下。",
+        "锅中少油，下姜丝和虾皮炒香。",
+        "加开水放冬瓜，煮到冬瓜透明。",
+        "加盐调味，撒葱花出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "拍黄瓜",
+      "source_url": "https://home.meishichina.com/recipe-386511.html",
+      "verified": true,
+      "note": "来源为美食天下「拍黄瓜」，黄瓜 1 根+红辣椒+香醋+蚝油；本份量按两人份整理。",
+      "tags": [
+        "凉菜",
+        "清淡",
+        "凉拌",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "黄瓜",
+          "quantity": 300,
+          "unit": "克",
+          "note": "拍裂切段"
+        },
+        {
+          "definition": "辣椒",
+          "quantity": 20,
+          "unit": "克",
+          "note": "原方红辣椒"
+        },
+        {
+          "definition": "醋",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方香醋"
+        },
+        {
+          "definition": "蚝油",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "香油",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": "提香"
+        }
+      ],
+      "steps": [
+        "黄瓜洗净拍裂，切段后撒盐腌十分钟。",
+        "倒掉渗出的水，加辣椒丝。",
+        "调入醋、蚝油和香油拌匀。",
+        "冷藏十分钟更入味。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "凉拌木耳",
+      "source_url": "https://home.meishichina.com/recipe-416424.html",
+      "verified": true,
+      "note": "来源为美食天下「凉拌木耳（附自制辣椒油）」，黑木耳 150 克，蒜、小米椒、香菜、米醋等；自制辣椒油步骤此处简化为现成辣椒油。",
+      "tags": [
+        "凉菜",
+        "蒜香",
+        "辣",
+        "凉拌"
+      ],
+      "ingredients": [
+        {
+          "definition": "木耳",
+          "quantity": 150,
+          "unit": "克",
+          "note": "原方黑木耳，泡发"
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 30,
+          "unit": "克",
+          "note": "原方蒜 6 瓣"
+        },
+        {
+          "definition": "辣椒油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "小米椒",
+          "quantity": 20,
+          "unit": "克",
+          "note": "原方小米椒 4 个"
+        },
+        {
+          "definition": "香菜",
+          "quantity": 15,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "白糖",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方白砂糖"
+        },
+        {
+          "definition": "米醋",
+          "quantity": 30,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "白芝麻",
+          "quantity": 1,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "木耳泡发洗净，撕小朵。",
+        "水开下木耳焯两分钟，捞出过凉水沥干。",
+        "加蒜末、小米椒、香菜、盐、糖、米醋拌匀。",
+        "淋辣椒油，撒白芝麻即可。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "芹菜炒香干",
+      "source_url": "https://home.meishichina.com/recipe-377480.html",
+      "verified": true,
+      "note": "来源为美食天下「芹菜炒香干」，香干对应食材库中的豆干（别名香干）；味极鲜生抽即生抽。",
+      "tags": [
+        "半荤半素",
+        "咸鲜",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "豆干",
+          "quantity": 200,
+          "unit": "克",
+          "note": "原方香干，切条"
+        },
+        {
+          "definition": "芹菜",
+          "quantity": 250,
+          "unit": "克",
+          "note": "切段"
+        },
+        {
+          "definition": "猪里脊",
+          "quantity": 50,
+          "unit": "克",
+          "note": "原方肉丝"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方葱片"
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "干辣椒",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "泡椒",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方泡辣椒"
+        },
+        {
+          "definition": "花椒",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "生抽",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": "原方味极鲜生抽"
+        },
+        {
+          "definition": "白糖",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方糖"
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 2,
+          "unit": "克",
+          "note": "原方鸡粉"
+        },
+        {
+          "definition": "盐",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "香油",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "胡椒粉",
+          "quantity": 1,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "芹菜切段焯水十秒，豆干切条。",
+        "热锅倒油，下肉丝炒变色，加葱姜蒜、干辣椒、花椒、泡椒炒香。",
+        "倒入豆干和芹菜大火翻炒。",
+        "加生抽、糖、盐、鸡精和胡椒粉炒匀，淋香油出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "清炒油麦菜",
+      "source_url": "https://home.meishichina.com/recipe-505726.html",
+      "verified": true,
+      "note": "来源为美食天下「清炒油麦菜」，油麦菜+蒜末+油+五香粉+盐+蚝油。",
+      "tags": [
+        "素菜",
+        "蒜香",
+        "清淡",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "油麦菜",
+          "quantity": 400,
+          "unit": "克",
+          "note": "掐段"
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方蒜末"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方油"
+        },
+        {
+          "definition": "五香粉",
+          "quantity": 1,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "蚝油",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "油麦菜洗净切长段。",
+        "热锅倒油，下蒜末炒香。",
+        "倒入油麦菜大火快炒至变软。",
+        "加盐、五香粉和蚝油炒匀立刻出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "蚝油生菜",
+      "source_url": "https://home.meishichina.com/recipe-579509.html",
+      "verified": true,
+      "note": "来源为美食天下「蚝油生菜」，生菜 300 克、蒜 6 瓣、蚝油 2 勺、生抽半勺、鸡精 2 克、淀粉 3 克。",
+      "tags": [
+        "素菜",
+        "蒜香",
+        "清淡",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "生菜",
+          "quantity": 300,
+          "unit": "克",
+          "note": "掰开洗净"
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 30,
+          "unit": "克",
+          "note": "原方蒜 6 瓣"
+        },
+        {
+          "definition": "蚝油",
+          "quantity": 30,
+          "unit": "毫升",
+          "note": "原方 2 勺"
+        },
+        {
+          "definition": "生抽",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 3,
+          "unit": "克",
+          "note": "调芡汁"
+        }
+      ],
+      "steps": [
+        "生菜焯水十秒捞出摆盘。",
+        "蚝油、生抽、鸡精、淀粉加半碗水调成汁。",
+        "热锅倒油炒香蒜末，倒入料汁烧开。",
+        "把芡汁浇在生菜上即可。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "番茄鸡蛋面",
+      "source_url": "https://m.meishichina.com/recipe/481838/",
+      "verified": true,
+      "note": "来源为美食天下手机版「番茄鸡蛋面」，主料番茄、鸡蛋、面饼（此处用面条）。",
+      "tags": [
+        "主食",
+        "咸鲜",
+        "煮",
+        "快手菜",
+        "早餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "番茄",
+          "quantity": 200,
+          "unit": "克",
+          "note": "切块"
+        },
+        {
+          "definition": "鸡蛋",
+          "quantity": 2,
+          "unit": "个",
+          "note": ""
+        },
+        {
+          "definition": "面条",
+          "quantity": 200,
+          "unit": "克",
+          "note": "原方面饼"
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方蒜 1 瓣"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方葱"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方油"
+        }
+      ],
+      "steps": [
+        "番茄切块，鸡蛋加盐打散。",
+        "热锅倒油炒蛋，凝固划散盛出。",
+        "下蒜末和番茄炒软，加水烧开。",
+        "下面条煮两分钟，放回鸡蛋，加盐撒葱花。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "小米南瓜粥",
+      "source_url": "https://home.meishichina.com/recipe-170028.html",
+      "verified": true,
+      "note": "来源为美食天下「小米南瓜粥」，小米 100g、小南瓜 200g、水 1000cc；清水不作为食材定义列出。",
+      "tags": [
+        "主食",
+        "清淡",
+        "煮",
+        "早餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "小米",
+          "quantity": 100,
+          "unit": "克",
+          "note": "淘洗"
+        },
+        {
+          "definition": "南瓜",
+          "quantity": 200,
+          "unit": "克",
+          "note": "原方小南瓜，去皮切块"
+        }
+      ],
+      "steps": [
+        "小米淘洗两遍，南瓜去皮切小块。",
+        "小米加约十倍的清水烧开。",
+        "放南瓜转小火煮二十五分钟。",
+        "中途搅动防粘底，煮至南瓜软烂即可。"
+      ],
+      "synonyms": [
+        "南瓜小米粥"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "香菇鸡肉粥",
+      "source_url": "https://home.meishichina.com/recipe-384494.html",
+      "verified": true,
+      "note": "来源为美食天下「香菇鸡肉粥」，大米+鸡胸+香菇，辅料葱、姜；原方一碗米为多人份，此处按两人份折算。",
+      "tags": [
+        "主食",
+        "清淡",
+        "煮",
+        "早餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "大米",
+          "quantity": 150,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "鸡胸肉",
+          "quantity": 150,
+          "unit": "克",
+          "note": "原方鸡胸，切丝"
+        },
+        {
+          "definition": "香菇",
+          "quantity": 100,
+          "unit": "克",
+          "note": "切片"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "大米淘净，加约八倍水烧开。",
+        "转小火煮二十分钟至米粒开花。",
+        "下香菇片和鸡丝，再煮五分钟。",
+        "加盐调味，撒葱花。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "鸡蛋羹",
+      "source_url": "https://m.meishichina.com/recipe/498107/",
+      "verified": true,
+      "note": "清单原选来源为「鸡蛋羹（微波炉版）」，非常规做法，已替换为常规蒸制来源「家常鸡蛋羹」（同站 同菜名）；原方鸡蛋 3 个、葱白、盐、香油，蛋液与温水约 1:1。",
+      "tags": [
+        "素菜",
+        "清淡",
+        "蒸",
+        "早餐",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "鸡蛋",
+          "quantity": 3,
+          "unit": "个",
+          "note": ""
+        },
+        {
+          "definition": "小葱",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方葱白"
+        },
+        {
+          "definition": "盐",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "香油",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "鸡蛋打散，加盐和等量温水搅匀。",
+        "蛋液过筛去浮沫，倒入碗中。",
+        "冷水上锅，小火蒸十二分钟。",
+        "出锅淋香油，撒葱花。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "土豆鸡蛋饼",
+      "source_url": "https://home.meishichina.com/recipe-63554.html",
+      "verified": true,
+      "note": "来源为美食天下「土豆鸡蛋饼」，土豆 1 个、鸡蛋 2 个、面粉 3 大勺，配料食盐、孜然粉、胡椒粉。",
+      "tags": [
+        "主食",
+        "咸鲜",
+        "煎",
+        "早餐",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "土豆",
+          "quantity": 200,
+          "unit": "克",
+          "note": "擦丝"
+        },
+        {
+          "definition": "鸡蛋",
+          "quantity": 2,
+          "unit": "个",
+          "note": ""
+        },
+        {
+          "definition": "面粉",
+          "quantity": 30,
+          "unit": "克",
+          "note": "原方 3 大勺"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方香葱"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "孜然",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方孜然粉"
+        },
+        {
+          "definition": "胡椒粉",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "土豆擦丝，加鸡蛋、面粉和调料拌成糊。",
+        "平底锅倒薄油，舀入面糊摊平。",
+        "小火煎至底面金黄后翻面。",
+        "两面煎熟切块装盘。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "清炒胡萝卜丝",
+      "source_url": "https://home.meishichina.com/recipe-202144.html",
+      "verified": true,
+      "note": "来源为美食天下「清炒胡萝卜丝」，胡萝卜 1 个、大蒜 2 瓣、食用油 1 匙、鸡精、盐。",
+      "tags": [
+        "素菜",
+        "清淡",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "胡萝卜",
+          "quantity": 200,
+          "unit": "克",
+          "note": "切丝"
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方大蒜瓣 2 个"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": "原方食用油 1 匙"
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 1,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "胡萝卜擦或切成细丝。",
+        "热锅倒油，下蒜末炒香。",
+        "倒入胡萝卜丝中火翻炒至变软。",
+        "加盐和鸡精炒匀出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "酸辣土豆丝",
+      "source_url": "https://home.meishichina.com/recipe-414145.html",
+      "verified": true,
+      "note": "来源为美食天下「酸辣土豆丝」，土豆+辣椒+酸辣椒（泡椒）+米醋。",
+      "tags": [
+        "素菜",
+        "辣",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "土豆",
+          "quantity": 300,
+          "unit": "克",
+          "note": "切细丝泡水"
+        },
+        {
+          "definition": "辣椒",
+          "quantity": 30,
+          "unit": "克",
+          "note": "切丝"
+        },
+        {
+          "definition": "泡椒",
+          "quantity": 20,
+          "unit": "克",
+          "note": "原方酸辣椒三根"
+        },
+        {
+          "definition": "米醋",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "土豆切丝，清水冲去淀粉后沥干。",
+        "热锅倒油，下辣椒丝和泡椒炒香。",
+        "倒入土豆丝大火快炒两分钟。",
+        "加盐和米醋炒匀，断生即出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "手撕包菜",
+      "source_url": "https://china-kitchen.lkk.com.cn/kitchen/zh-CN/recipe/0/c4/5f/",
+      "verified": true,
+      "note": "来源为李锦记中国官网「手撕包菜」，卷心菜半颗、干辣椒 4 个，调味食盐、白糖、鸡精、生抽、酱油；卷心菜对应食材库中的圆白菜。",
+      "tags": [
+        "素菜",
+        "辣",
+        "炒",
+        "快手菜"
+      ],
+      "ingredients": [
+        {
+          "definition": "圆白菜",
+          "quantity": 400,
+          "unit": "克",
+          "note": "原方卷心菜半颗，手撕成片"
+        },
+        {
+          "definition": "干辣椒",
+          "quantity": 4,
+          "unit": "个",
+          "note": "切段"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方 1 勺"
+        },
+        {
+          "definition": "白糖",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方 1 勺"
+        },
+        {
+          "definition": "鸡精",
+          "quantity": 2,
+          "unit": "克",
+          "note": "原方 1 勺"
+        },
+        {
+          "definition": "生抽",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": ""
+        },
+        {
+          "definition": "醋",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": "原方陈醋少许"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": ""
+        }
+      ],
+      "steps": [
+        "圆白菜手撕成片，洗净沥干。",
+        "油烧至微热，下干辣椒段炒香。",
+        "倒入包菜，大火翻炒至微微变色。",
+        "加盐、糖、鸡精继续炒，淋生抽和醋炒匀出锅。"
+      ],
+      "synonyms": [
+        "手撕圆白菜",
+        "炒圆白菜"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "肉末茄子",
+      "source_url": "https://m.xiachufang.com/recipe/104625616/",
+      "verified": true,
+      "note": "来源为下厨房「肉末茄子」，茄子 1 个（大）、肉末、小米辣、蒜头、淀粉、盐、葱、姜、生抽、老抽、陈醋、白糖；原方茄子先蒸后炒。",
+      "tags": [
+        "半荤半素",
+        "咸鲜",
+        "炒",
+        "晚餐"
+      ],
+      "ingredients": [
+        {
+          "definition": "茄子",
+          "quantity": 400,
+          "unit": "克",
+          "note": "去皮切条"
+        },
+        {
+          "definition": "猪肉馅",
+          "quantity": 100,
+          "unit": "克",
+          "note": "原方肉末"
+        },
+        {
+          "definition": "小米椒",
+          "quantity": 20,
+          "unit": "克",
+          "note": "原方红绿各 2 根"
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 15,
+          "unit": "克",
+          "note": "原方蒜头 3 瓣"
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方一勺"
+        },
+        {
+          "definition": "盐",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方一勺"
+        },
+        {
+          "definition": "小葱",
+          "quantity": 20,
+          "unit": "克",
+          "note": "原方葱 2 根"
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方 2 片"
+        },
+        {
+          "definition": "生抽",
+          "quantity": 10,
+          "unit": "毫升",
+          "note": "原方 1 勺"
+        },
+        {
+          "definition": "老抽",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": "原方半勺"
+        },
+        {
+          "definition": "醋",
+          "quantity": 5,
+          "unit": "毫升",
+          "note": "原方陈醋半勺"
+        },
+        {
+          "definition": "白糖",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方 1 勺"
+        }
+      ],
+      "steps": [
+        "茄子去皮切条，水开后蒸五分钟取出。",
+        "肉末加淀粉抓匀，热锅倒油炒散盛出。",
+        "下小米椒、蒜、姜炒香，倒回肉末。",
+        "加生抽、老抽、醋、糖和盐，放茄子烧两分钟。",
+        "撒葱花翻匀出锅。"
+      ]
+    },
+    {
+      "servings_note": "按两人份家庭参考量整理，非原方精确份量",
+      "name": "香菇扒菜心",
+      "source_url": "https://m.meishichina.com/recipe/549527/",
+      "verified": true,
+      "note": "来源为美食天下手机版「香菇扒菜心」，香菇 11 朵、菜心 300 克，辅料蒜、姜、干葱头、淀粉等；干葱头以洋葱代替。",
+      "tags": [
+        "素菜",
+        "咸鲜",
+        "炒"
+      ],
+      "ingredients": [
+        {
+          "definition": "香菇",
+          "quantity": 200,
+          "unit": "克",
+          "note": "原方 11 朵，去蒂"
+        },
+        {
+          "definition": "菜心",
+          "quantity": 300,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "大蒜",
+          "quantity": 10,
+          "unit": "克",
+          "note": "原方 2 瓣"
+        },
+        {
+          "definition": "姜",
+          "quantity": 5,
+          "unit": "克",
+          "note": "原方 1 块"
+        },
+        {
+          "definition": "洋葱",
+          "quantity": 20,
+          "unit": "克",
+          "note": "原方干葱头 1 个"
+        },
+        {
+          "definition": "淀粉",
+          "quantity": 2,
+          "unit": "克",
+          "note": ""
+        },
+        {
+          "definition": "白糖",
+          "quantity": 3,
+          "unit": "克",
+          "note": "原方白砂糖少许"
+        },
+        {
+          "definition": "蚝油",
+          "quantity": 30,
+          "unit": "毫升",
+          "note": "原方 2 汤匙"
+        },
+        {
+          "definition": "生抽",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方 1 汤匙"
+        },
+        {
+          "definition": "盐",
+          "quantity": 1,
+          "unit": "克",
+          "note": "原方 1 克"
+        },
+        {
+          "definition": "胡椒粉",
+          "quantity": 2,
+          "unit": "克",
+          "note": "原方白胡椒粉少许"
+        },
+        {
+          "definition": "食用油",
+          "quantity": 15,
+          "unit": "毫升",
+          "note": "原方油"
+        }
+      ],
+      "steps": [
+        "香菇去蒂划十字，菜心修整洗净。",
+        "香菇和菜心分别焯水，菜心摆盘。",
+        "热锅倒油，下蒜片、姜丝、洋葱炒香。",
+        "放香菇，加蚝油、生抽、盐、糖、胡椒粉和水烧开。",
+        "淋水淀粉收汁，把香菇和芡汁浇在菜心上。"
+      ]
+    }
+  ],
+  "synonyms_note": "每道菜的同义名（用于判重）来自 recipe_aliases 同步，已写入 synonyms 字段；导入器按『归一名称 + synonyms』判定已存在则跳过。"
+}

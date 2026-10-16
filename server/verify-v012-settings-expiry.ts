@@ -10,22 +10,62 @@
  * 使用独立临时库与动态端口，不触碰正式库。
  */
 
-import { readFileSync, readdirSync, rmSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join, resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
 
-import { startServer, waitForReady, ServerStartupError, type ServerHandle } from './harness/server-lifecycle.js'
+import { assertSafeDbPath, startServer, waitForReady, ServerStartupError, type ServerHandle } from './harness/server-lifecycle.js'
 
 const PORT = 35000 + Math.floor(Math.random() * 2000)
 const BASE = `http://127.0.0.1:${PORT}`
-// 临时库根目录：默认 server/data/（行为与改造前一致）；
-// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
-const dataRoot = resolve(
-  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
-)
-const dbPath = resolve(dataRoot, `v012-settings-${Date.now()}.db`)
 
+/**
+ * v0.2.3 **测试隔离修复**：
+ *   默认根目录改为**系统 tmp 下的独立随机目录**（`hc-v012-<uuid>`），
+ *   **不再**默认 `server/data` —— 后者是受保护区，测试产物不得落在那里。
+ *   `HOME_CHEF_TEST_DB_DIR` 仍可覆盖（用于统一指定临时根）。
+ */
+const serverRoot = process.cwd()
+const baseRoot = process.env.HOME_CHEF_TEST_DB_DIR
+  ? resolve(process.env.HOME_CHEF_TEST_DB_DIR)
+  : tmpdir()
+const runRoot = join(baseRoot, `hc-v012-${randomUUID()}`)
+const dbPath = resolve(runRoot, `v012-settings-${Date.now()}.db`)
+
+/* ---------- 路径保护（必须在创建 / 写入任何文件之前） ---------- */
+const realDb = resolve(serverRoot, 'data', 'homechef.db')
+try {
+  assertSafeDbPath(dbPath, serverRoot)
+} catch (e) {
+  console.error(`ABORT: assertSafeDbPath 拒绝：${e instanceof Error ? e.message : String(e)}`)
+  process.exit(1)
+}
+if (resolve(dbPath).toLowerCase() === realDb.toLowerCase()) {
+  console.error('ABORT: 测试库路径等于真实库')
+  process.exit(1)
+}
+if (!resolve(dbPath).startsWith(resolve(runRoot))) {
+  console.error('ABORT: 测试库不在本次运行目录内')
+  process.exit(1)
+}
+
+mkdirSync(runRoot, { recursive: true })
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
+
+/* 收尾：只删除**本次自己的** runRoot（三重守卫），异常路径同样生效 */
+process.on('exit', () => {
+  try {
+    const resolvedRun = resolve(runRoot)
+    if (resolvedRun.toLowerCase() === resolve(serverRoot, 'data').toLowerCase()) return
+    if (!resolvedRun.startsWith(resolve(baseRoot))) return
+    if (!basename(resolvedRun).startsWith('hc-v012-')) return
+    rmSync(resolvedRun, { recursive: true, force: true })
+  } catch {
+    /* 交给系统回收 */
+  }
+})
 
 const setup = new Database(dbPath)
 setup.pragma('foreign_keys = ON')

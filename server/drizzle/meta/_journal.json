@@ -85,6 +85,13 @@
       "when": 1791840000000,
       "tag": "0011_cooking_session_name",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791926400000,
+      "tag": "0012_v023_tags_preference",
+      "breakpoints": true
     }
   ]
 }

@@ -703,6 +703,15 @@ export const recipeIngredient = sqliteTable(
  *
  * - 名称唯一（`name_normalized` UNIQUE）—— 同名 Tag 不得重复创建
  * - 支持自由创建与复用
+ *
+ * v0.2.3 增补：
+ *   - `category`   五大固定分类 code，或 NULL（未分类；旧标签即为此）
+ *   - `code`       系统预设的**稳定身份**（如 `dish_type.staple`），自定义为 NULL
+ *   - `is_system`  1 = 迁移播种的系统预设，0 = 用户自建
+ *   - `sort_order` 预设展示顺序（同分类内升序）
+ *
+ * ⚠️ 分类 code 与预设清单集中在 `services/tagConfig.ts`，此处**不重复**中文字典。
+ * ⚠️ `code` 的 UNIQUE 允许多行 NULL（SQLite 语义），因此自定义 Tag 不受影响。
  */
 export const recipeTag = sqliteTable(
   'recipe_tag',
@@ -715,9 +724,24 @@ export const recipeTag = sqliteTable(
     /** 归一化名称：trim + toLowerCase，全局唯一 */
     name_normalized: text('name_normalized').notNull().unique(),
 
+    /** 五大分类 code；NULL = 未分类 */
+    category: text('category'),
+
+    /** 系统预设的稳定身份 code；自定义 Tag 为 NULL */
+    code: text('code').unique(),
+
+    /** 1 = 系统预设（迁移播种），0 = 用户自建 */
+    is_system: integer('is_system').notNull().default(0),
+
+    /** 预设展示顺序 */
+    sort_order: integer('sort_order').notNull().default(0),
+
     created_at: text('created_at').notNull(),
   },
-  (table) => [index('recipe_tag_name_normalized_idx').on(table.name_normalized)],
+  (table) => [
+    index('recipe_tag_name_normalized_idx').on(table.name_normalized),
+    index('recipe_tag_category_idx').on(table.category),
+  ],
 )
 
 /**
@@ -753,6 +777,46 @@ export const recipeTagLink = sqliteTable(
     uniqueIndex('recipe_tag_link_unique').on(table.recipe_id, table.tag_id),
     index('recipe_tag_link_recipe_id_idx').on(table.recipe_id),
     index('recipe_tag_link_tag_id_idx').on(table.tag_id),
+  ],
+)
+
+/** 单菜偏好取值（v0.2.3） */
+export const RECIPE_PREFERENCE_VALUES = ['like', 'dislike'] as const
+export type RecipePreferenceValue = (typeof RECIPE_PREFERENCE_VALUES)[number]
+
+/**
+ * 单道菜谱的偏好表（v0.2.3 点赞 / 点踩）。
+ *
+ * - **只针对单道菜谱**，不支持整餐评价
+ * - 每个菜谱**最多一行**（`recipe_id` UNIQUE）
+ * - 「取消偏好」= **删除该行**，不写 `none` 之类的占位值
+ * - 影响**推荐软评分**（点赞软加权、点踩软降权），**绝不排除**任何菜谱
+ * - 删除菜谱时偏好由 ON DELETE CASCADE 清理
+ */
+export const recipePreference = sqliteTable(
+  'recipe_preference',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+
+    recipe_id: integer('recipe_id')
+      .notNull()
+      .unique()
+      .references(() => recipe.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    /** 'like' | 'dislike' */
+    value: text('value').notNull(),
+
+    created_at: text('created_at').notNull(),
+    updated_at: text('updated_at').notNull(),
+  },
+  (table) => [
+    check(
+      'recipe_preference_value_in_enum',
+      sql`${table.value} in ('like', 'dislike')`,
+    ),
   ],
 )
 
@@ -1162,6 +1226,8 @@ export type RecipeTag = typeof recipeTag.$inferSelect
 export type NewRecipeTag = typeof recipeTag.$inferInsert
 export type RecipeTagLink = typeof recipeTagLink.$inferSelect
 export type NewRecipeTagLink = typeof recipeTagLink.$inferInsert
+export type RecipePreference = typeof recipePreference.$inferSelect
+export type NewRecipePreference = typeof recipePreference.$inferInsert
 
 /* ---- v0.2.1 烹饪闭环 ---- */
 export type RecipeStep = typeof recipeStep.$inferSelect

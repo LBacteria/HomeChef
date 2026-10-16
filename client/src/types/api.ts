@@ -406,11 +406,74 @@ export interface RecipeListQuery {
   sortOrder?: RecipeSortOrder
 }
 
-/** Tag（GET /api/tags 的元素） */
+/**
+ * Tag（GET /api/tags 的元素）。
+ *
+ * v0.2.3：新增五大分类与稳定身份。
+ *   - `category` 五大分类 code，或 `null`（未分类，旧标签即为此）
+ *   - `code`     系统预设的稳定身份；自定义为 null
+ *   - `is_system` true = 系统预设
+ *   - `recipe_count` 被多少菜谱引用（删除前提示用）
+ *
+ * ⚠️ 中文分类别名**不在这里**：由 `GET /api/tag-categories` 下发，
+ *    前端不得自行维护一份分类字典。
+ */
 export interface RecipeTagItem {
   id: number
   name: string
+  category: RecipeTagCategoryCode | null
+  code: string | null
+  is_system: boolean
+  sort_order: number
+  recipe_count: number
   created_at: string
+}
+
+/** 五大固定分类 code */
+export type RecipeTagCategoryCode =
+  | 'dish_type'
+  | 'flavor'
+  | 'cooking_method'
+  | 'meal_scene'
+  | 'feature'
+
+/** 分类字典（GET /api/tag-categories）——**后端是唯一来源** */
+export interface TagCategoryDict {
+  categories: Array<{ code: RecipeTagCategoryCode; label: string }>
+  /** 「未分类」不是分类 code（落库为 null），但需要展示标题 */
+  unclassified: { code: 'unclassified'; label: string }
+}
+
+/** 新建 Tag 的请求体（category 省略/null = 未分类） */
+export interface CreateTagInput {
+  name: string
+  category?: RecipeTagCategoryCode | null
+}
+
+/** 修改 Tag 的请求体（部分更新，至少一个字段） */
+export interface UpdateTagInput {
+  name?: string
+  category?: RecipeTagCategoryCode | null
+}
+
+/* ============================================================
+ * v0.2.3 单菜偏好（点赞 / 点踩）
+ * ============================================================ */
+
+export type RecipePreferenceValue = 'like' | 'dislike'
+
+/** 一条偏好记录（GET /api/recipe-preferences 的元素） */
+export interface RecipePreferenceItem {
+  recipe_id: number
+  value: RecipePreferenceValue
+  created_at: string
+  updated_at: string
+}
+
+/** 偏好的读写结果（value 为 null 表示已取消） */
+export interface RecipePreferenceState {
+  recipe_id: number
+  value: RecipePreferenceValue | null
 }
 
 /**
@@ -544,6 +607,9 @@ export interface SkipConfirmationInput {
 
 /* ---------- 结算 ---------- */
 
+/** 派生确认原因：`seasoning_presence` **只存在于计算与展示**，落库时映射为 `user_choice` */
+export type DerivedSkipReason = DishSkipReason | 'seasoning_presence'
+
 /** 结算预览中的一项（GET .../settle/preview） */
 export interface SettlementPreviewItem {
   dish_id: number
@@ -552,14 +618,26 @@ export interface SettlementPreviewItem {
   definition_name: string
   unit: string | null
   required_quantity: number | null
-  /** 当前库存可扣总量（单位一致） */
+  /**
+   * v0.2.3（R4）：处理到**本行时**该（食材 + 单位）的**剩余**可用总量。
+   *
+   * ⚠️ 已扣掉前面需求占用的部分 —— 不再是"每行都显示全量可用"。
+   */
   available_quantity: number
-  /** 后端判定的必需确认原因；null = 无需确认 */
-  required_reason: DishSkipReason | null
-  /** 该需求是否已有有效确认 */
+  /** 后端判定的必需确认原因（**派生**；`seasoning_presence` 不会落库） */
+  required_reason: DerivedSkipReason | null
+  /**
+   * 确认时应**回传**的持久化原因。
+   *
+   * ⚠️ `seasoning_presence` → `user_choice`；数据库 CHECK 只允许 `DishSkipReason`。
+   */
+  confirm_reason: DishSkipReason | null
+  /** 该需求是否已有有效确认（仅指 `null_quantity` / `unit_mismatch` 两类必需确认） */
   confirmed: boolean
-  /** 是否可直接扣减（无需确认且库存充足） */
+  /** 是否确实能按真实顺序扣到所需量（结合总计判定） */
   can_consume: boolean
+  /** v0.2.3（R4）：本行会被**跳过且不扣库存**（用量未指定 / 已确认跳过） */
+  skipped: boolean
 }
 
 /** 结算预览响应 */
@@ -568,7 +646,15 @@ export interface SettlementPreview {
   status: CookingSessionStatus
   items: SettlementPreviewItem[]
   needing_confirmation: number
+  /** ⚠️ 语义是「**待确认项为 0**」，**不是**「库存充足」 */
   ready: boolean
+  /**
+   * v0.2.3（R4）：所有会扣减的行**都真的能扣到**（库存**总量**足够）。
+   *
+   * ⚠️ 与 `ready` 是**两件事**：两个需求各 2、库存 3 时，
+   *    `ready` 可能为 true（无需确认），但 `stock_sufficient` 为 false（总量不够）。
+   */
+  stock_sufficient: boolean
 }
 
 /** 结算结果中的一项 */
@@ -648,12 +734,63 @@ export interface RecommendationDish {
   steps: RecommendationDishStep[]
 }
 
+/** 评分分项（v0.2.3：每套方案都能解释「分数从哪来」） */
+export interface RecommendationScoreBreakdown {
+  ready_bonus: number
+  coverage: number
+  utilization: number
+  expiring: number
+  structure: number
+  shared: number
+  diversity: number
+  missing_penalty: number
+  seasoning_penalty: number
+  unknown_penalty: number
+  /** 库存侧小计（不含软信号） */
+  stock_total: number
+  preference: number
+  history: number
+  rotation: number
+  /** 最终总分 */
+  total: number
+}
+
+/** 软信号明细（偏好 / 历史 / 轮换） */
+export interface RecommendationSignals {
+  preference: number
+  history: number
+  rotation: number
+  liked: number[]
+  disliked: number[]
+  cooked_recently: number[]
+  repeated_meal: boolean
+}
+
+/** 一条明确缺口（v0.2.3：不足方案逐项标明缺什么） */
+export interface RecommendationShortage {
+  definition_id: number
+  definition_name: string
+  unit: string | null
+  required_quantity: number | null
+  available_quantity: number
+  missing_quantity: number | null
+  status: 'insufficient' | 'unit_mismatch' | 'seasoning_missing'
+  is_seasoning: boolean
+  note: string
+}
+
 export interface RecommendationPlan {
   plan_id: string
   /** 用户确认时的服务端快照指纹；apply 必须原样回传 */
   snapshot_id: string
   level: RecommendationLevel
   score: number
+  /** 评分分项（v0.2.3） */
+  score_breakdown: RecommendationScoreBreakdown
+  /** 软信号明细（v0.2.3） */
+  signals: RecommendationSignals
+  /** 缺口清单（v0.2.3；无缺口时为空数组） */
+  shortages: RecommendationShortage[]
   dishes: RecommendationDish[]
   requirements: RecommendationRequirement[]
   summary: {
@@ -666,6 +803,20 @@ export interface RecommendationPlan {
     expiring_used_count: number
     expired_excluded_count: number
     coverage: number
+    /** 需求满足比例（0–1，排序用，v0.2.3） */
+    quantity_coverage: number
+    /** 可用库存消耗比例（0–1，减少浪费，v0.2.3） */
+    utilization: number
+    /** 临期可实耗比例（0–1，v0.2.3） */
+    expiring_ratio: number
+    /** 被 ≥2 道菜共享的食材项数（v0.2.3） */
+    shared_requirement_count: number
+    /** 结构搭配得分（标签层面粗略搭配，非营养数值，v0.2.3） */
+    structure_score: number
+    /** 本餐涉及的菜品类型角色（v0.2.3） */
+    dish_roles: string[]
+    /** 本餐涉及的「菜品特点」标签（v0.2.3） */
+    feature_tags: string[]
     categories_used: string[]
     tags_used: string[]
   }
@@ -684,6 +835,18 @@ export interface MealPlanResult {
   combinations_evaluated: number
   truncated: boolean
   today: string
+  /** v0.2.3：本次标签筛选回显 */
+  tag_filter: {
+    tags: string[]
+    tag_mode: RecipeTagMode
+    matched_recipe_count: number
+  }
+  /** v0.2.3：命中的烹饪历史概览 */
+  history: {
+    window_days: number
+    settled_meals: number
+    cooked_recipes: number
+  }
   plans: RecommendationPlan[]
   notes: string[]
 }

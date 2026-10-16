@@ -1,13 +1,25 @@
-import type { RecipeDetail } from '../types/api'
+import { useMemo } from 'react'
+
+import PreferenceButtons from './PreferenceButtons'
+import type {
+  RecipeDetail,
+  RecipePreferenceValue,
+  RecipeTagItem,
+  TagCategoryDict,
+} from '../types/api'
 
 /**
- * 菜谱详情视图（批次 4 剩余功能）。
+ * 菜谱详情视图（批次 4 剩余功能；v0.2.3 增补单菜偏好与分类标签展示）。
  *
  * 展示**真实持久化数据**（由父组件从 `GET /api/recipes/:id` 取得）：
- * 名称、描述、Tag、食材（名称 / 数量 / 单位 / 备注 / 顺序）。
+ * 名称、描述、Tag、食材（名称 / 数量 / 单位 / 备注 / 顺序）、烹饪步骤。
+ *
+ * v0.2.3 增补：
+ *   - **喜欢 / 不喜欢 / 取消**：只针对这一道菜谱，落库失败必须明确报错；
+ *   - Tag 按五大分类分组展示（分组标题来自后端字典）。
  *
  * 关键约定：
- *   - 只读展示，**不修改任何数据**；编辑与删除交由父组件处理
+ *   - 展示为主，**不修改任何数据**；编辑与删除交由父组件处理
  *   - 空数据（无描述 / 无食材 / 无 Tag）必须给出明确提示，而不是留白
  *   - 食材**重复是合法的**（同一食材可多次出现），因此 key 使用
  *     `sort_order + 下标`，**不使用** `recipe_ingredient.id`
@@ -16,6 +28,25 @@ import type { RecipeDetail } from '../types/api'
 
 interface Props {
   detail: RecipeDetail
+  /** v0.2.3：当前偏好（null = 无评价） */
+  preference?: RecipePreferenceValue | null
+  /**
+   * v0.2.3：偏好状态是否**已成功加载**。
+   *
+   * ⚠️ 未加载成功时**禁止交互**：否则界面会把"未知"当成 null，
+   *    用户点一下「取消评价」就可能覆盖掉真实的偏好。
+   */
+  preferenceReady?: boolean
+  /** v0.2.3：偏好加载失败的原因（非 null 时显示错误与重试） */
+  preferenceError?: string | null
+  /** v0.2.3：重试加载偏好 */
+  onRetryPreference?: () => void
+  /** v0.2.3：写入偏好；null = 取消 */
+  onSetPreference?: (next: RecipePreferenceValue | null) => Promise<void>
+  /** v0.2.3：全部标签（用于把详情的标签名称映射回分类） */
+  allTags?: RecipeTagItem[]
+  /** v0.2.3：分类字典（分组标题与顺序来自后端） */
+  tagDict?: TagCategoryDict | null
   onBack: () => void
   onEdit: () => void
   onDelete: () => void
@@ -29,8 +60,44 @@ function formatAmount(quantity: number | null, unit: string | null): string {
   return `${quantity} ${unit}`
 }
 
-export default function RecipeDetailView({ detail, onBack, onEdit, onDelete }: Props) {
+export default function RecipeDetailView({
+  detail,
+  preference = null,
+  preferenceReady = true,
+  preferenceError = null,
+  onRetryPreference,
+  onSetPreference,
+  allTags = [],
+  tagDict = null,
+  onBack,
+  onEdit,
+  onDelete,
+}: Props) {
   const hasNote = detail.note !== null && detail.note.trim().length > 0
+
+  /**
+   * 标签按分类分组（只展示**有标签**的分组）。
+   *
+   * ⚠️ 详情接口只返回标签**名称**，因此这里用父级传来的 `allTags`
+   *    把名称映射回分类；分组标题与顺序仍来自**后端字典**。
+   */
+  const tagGroups = useMemo(() => {
+    const categoryByName = new Map(allTags.map((t) => [t.name, t.category]))
+    const known = new Set<string>()
+    const out: Array<{ key: string; label: string; names: string[] }> = []
+
+    for (const c of tagDict?.categories ?? []) {
+      const names = detail.tags.filter((n) => categoryByName.get(n) === c.code)
+      for (const n of names) known.add(n)
+      out.push({ key: c.code, label: c.label, names })
+    }
+    out.push({
+      key: 'unclassified',
+      label: tagDict?.unclassified.label ?? '未分类',
+      names: detail.tags.filter((n) => !known.has(n)),
+    })
+    return out.filter((g) => g.names.length > 0)
+  }, [allTags, tagDict, detail.tags])
 
   return (
     <div className="recipe-detail">
@@ -52,6 +119,37 @@ export default function RecipeDetailView({ detail, onBack, onEdit, onDelete }: P
       {/* ---------- 名称 ---------- */}
       <h2 className="recipe-detail-name">{detail.name}</h2>
 
+      {/* ---------- v0.2.3：单菜偏好（喜欢 / 不喜欢 / 取消） ---------- */}
+      {onSetPreference && (
+        <section className="recipe-detail-section recipe-detail-pref">
+          <h3>我的评价</h3>
+
+          {preferenceError !== null ? (
+            <div className="load-error">
+              <p>评价状态加载失败：{preferenceError}</p>
+              {onRetryPreference && (
+                <button type="button" onClick={onRetryPreference}>
+                  重试
+                </button>
+              )}
+            </div>
+          ) : !preferenceReady ? (
+            <>
+              {/* ⚠️ 状态未知时禁用交互，避免把"未知"当作"无评价"覆盖真实偏好 */}
+              <PreferenceButtons value={preference} onSet={onSetPreference} disabled />
+              <p className="rec-muted">评价状态加载中…</p>
+            </>
+          ) : (
+            <PreferenceButtons value={preference} onSet={onSetPreference} />
+          )}
+
+          <p className="rec-muted">
+            只影响推荐时的排序权重：喜欢会软加权，不喜欢会软降权，
+            <strong>都不会把这道菜从推荐里排除</strong>。
+          </p>
+        </section>
+      )}
+
       {/* ---------- 描述 ---------- */}
       <section className="recipe-detail-section">
         <h3>描述</h3>
@@ -62,15 +160,22 @@ export default function RecipeDetailView({ detail, onBack, onEdit, onDelete }: P
         )}
       </section>
 
-      {/* ---------- Tag ---------- */}
+      {/* ---------- Tag（v0.2.3：按五大分类分组） ---------- */}
       <section className="recipe-detail-section">
         <h3>Tag</h3>
         {detail.tags.length > 0 ? (
-          <div className="recipe-detail-tags">
-            {detail.tags.map((t) => (
-              <span key={t} className="recipe-tag-badge">
-                {t}
-              </span>
+          <div className="recipe-detail-tag-groups">
+            {tagGroups.map((g) => (
+              <div key={g.key} className="recipe-detail-tag-group">
+                <span className="recipe-detail-tag-group-label">{g.label}</span>
+                <div className="recipe-detail-tags">
+                  {g.names.map((t) => (
+                    <span key={t} className="recipe-tag-badge">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         ) : (

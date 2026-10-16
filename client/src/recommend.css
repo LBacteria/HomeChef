@@ -458,3 +458,107 @@
     align-items: flex-start;
   }
 }
+
+/* ============================================================
+ * v0.2.3：标签筛选 / 评分分项 / 缺口清单 / 作废提示
+ * ============================================================ */
+
+.rec-filter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #e3d5c8;
+  border-radius: 8px;
+  background: #fdfaf6;
+}
+
+.rec-filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rec-filter-tags {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.rec-filter-clear {
+  border: none;
+  background: none;
+  color: #8a5b3a;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0;
+}
+
+.rec-notice {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid #c9843f;
+  background: #fff7ec;
+  color: #7a5320;
+  border-radius: 4px;
+}
+
+.rec-score-breakdown {
+  margin-top: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px dashed #ddc9b4;
+  border-radius: 6px;
+  background: #fffdfa;
+}
+
+.rec-score-lines {
+  list-style: none;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  color: #5a463a;
+}
+
+.rec-score-subtotal {
+  border-top: 1px solid #eee0d2;
+  padding-top: 0.25rem;
+  color: #7a5b3f;
+}
+
+.rec-score-total {
+  font-weight: 700;
+  color: #7a3f1f;
+}
+
+.rec-shortages {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  border-left: 3px solid #c0392b;
+  background: #fdf3f2;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.84rem;
+  color: #8c2f26;
+}
+
+/* 窄屏：评分行与筛选区纵向堆叠，不横向溢出 */
+@media (max-width: 420px) {
+  .rec-filter-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .rec-score-lines {
+    font-size: 0.8rem;
+  }
+}

@@ -18,21 +18,62 @@
  */
 
 import { spawn } from 'node:child_process'
-import { readFileSync, readdirSync, rmSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join, resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
 
-import { startServer, waitForReady, ServerStartupError, type ServerHandle } from './harness/server-lifecycle.js'
+import { assertSafeDbPath, startServer, waitForReady, ServerStartupError, type ServerHandle } from './harness/server-lifecycle.js'
 
 const PORT = 64800 + Math.floor(Math.random() * 200)
 const BASE = `http://127.0.0.1:${PORT}`
-// 临时库根目录：默认 server/data/（行为与改造前一致）；
-// 设置 HOME_CHEF_TEST_DB_DIR 时改写到隔离目录，避免在受保护区内建库。
-const dataRoot = resolve(
-  process.env.HOME_CHEF_TEST_DB_DIR || resolve(process.cwd(), 'data'),
-)
-const dbPath = resolve(dataRoot, `recipe-tx-${Date.now()}.db`)
+
+/**
+ * v0.2.3 **测试隔离修复**：
+ *   默认根目录改为**系统 tmp 下的独立随机目录**（`hc-recipe-tx-<uuid>`），
+ *   **不再**默认 `server/data` —— 后者是受保护区，测试产物不得落在那里。
+ *   `HOME_CHEF_TEST_DB_DIR` 仍可覆盖（用于统一指定临时根）。
+ */
+const serverRoot = process.cwd()
+const baseRoot = process.env.HOME_CHEF_TEST_DB_DIR
+  ? resolve(process.env.HOME_CHEF_TEST_DB_DIR)
+  : tmpdir()
+const runRoot = join(baseRoot, `hc-recipe-tx-${randomUUID()}`)
+const dbPath = resolve(runRoot, `recipe-tx-${Date.now()}.db`)
+
+/* ---------- 路径保护（必须在创建 / 写入任何文件之前） ---------- */
+const realDb = resolve(serverRoot, 'data', 'homechef.db')
+try {
+  assertSafeDbPath(dbPath, serverRoot)
+} catch (e) {
+  console.error(`ABORT: assertSafeDbPath 拒绝：${e instanceof Error ? e.message : String(e)}`)
+  process.exit(1)
+}
+if (resolve(dbPath).toLowerCase() === realDb.toLowerCase()) {
+  console.error('ABORT: 测试库路径等于真实库')
+  process.exit(1)
+}
+if (!resolve(dbPath).startsWith(resolve(runRoot))) {
+  console.error('ABORT: 测试库不在本次运行目录内')
+  process.exit(1)
+}
+
+mkdirSync(runRoot, { recursive: true })
 for (const s of ['', '-shm', '-wal']) rmSync(`${dbPath}${s}`, { force: true })
+
+/* 收尾：只删除**本次自己的** runRoot（三重守卫），异常路径同样生效 */
+process.on('exit', () => {
+  try {
+    const resolvedRun = resolve(runRoot)
+    if (resolvedRun.toLowerCase() === resolve(serverRoot, 'data').toLowerCase()) return
+    if (!resolvedRun.startsWith(resolve(baseRoot))) return
+    if (!basename(resolvedRun).startsWith('hc-recipe-tx-')) return
+    rmSync(resolvedRun, { recursive: true, force: true })
+  } catch {
+    /* 交给系统回收 */
+  }
+})
 
 const drizzleDir = resolve(process.cwd(), 'drizzle')
 const migrationFiles = readdirSync(drizzleDir).filter((x) => x.endsWith('.sql')).sort()
@@ -226,6 +267,8 @@ if (ready1) {
     }
 
     const before = snapshot()
+    // v0.2.3 含系统预设：比较完整事务前基线，而非假设全表只有 1 个 Tag。
+    const tagTableBefore = JSON.stringify(raw.prepare('select * from recipe_tag order by id').all())
     info('回滚前 · 菜谱', `name=${before.r.name} note=${before.r.note}`)
     info('回滚前 · 食材', JSON.stringify(before.ings))
     info('回滚前 · Tag', JSON.stringify(before.tags))
@@ -309,7 +352,9 @@ if (ready1) {
       ok('★★★ 事务内新建的 Tag 未泄漏', leak.c === 0, `${leak.c}`)
 
       const totalTags = raw.prepare('select count(*) c from recipe_tag').get() as any
-      ok('  Tag 总数与基线一致（仅剩原始Tag）', totalTags.c === 1, `${totalTags.c}`)
+      const tagTableAfter = JSON.stringify(raw.prepare('select * from recipe_tag order by id').all())
+      ok('  Tag 表与事务前基线完全一致（含系统预设）',
+        tagTableAfter === tagTableBefore, `${totalTags.c}`)
 
       /* ---------- 再验证：服务仍然可用 ---------- */
       const healthAfter = await fetch(`${BASE}/health`)

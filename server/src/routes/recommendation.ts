@@ -37,6 +37,10 @@ const mealPlansBodySchema = {
   required: ['people'],
   properties: {
     people: { type: 'integer', minimum: MIN_PEOPLE, maximum: MAX_PEOPLE },
+    /** v0.2.3：按 Tag 名称筛选参与推荐的菜谱（空数组 = 不筛选） */
+    tags: { type: 'array', items: { type: 'string', minLength: 1 } },
+    /** v0.2.3：Tag 筛选模式，'and'（默认）| 'or' */
+    tag_mode: { type: 'string', enum: ['and', 'or'] },
   },
 } as const
 
@@ -123,14 +127,23 @@ export function registerRecommendationRoutes(app: FastifyInstance): void {
    * POST /api/recommendation/meal-plans
    * 按人数生成 3–5 套整餐推荐。**只读**，不写数据库。
    *
+   * body: `{ people, tags?, tag_mode? }`
+   *   - `tags`     v0.2.3：按 Tag 名称筛选菜谱（AND / OR 由 `tag_mode` 决定）
+   *   - `tag_mode` 'and'（默认）| 'or'
+   *
    * 200 / 400
    */
-  app.post<{ Body: { people: number } }>(
+  app.post<{ Body: { people: number; tags?: string[]; tag_mode?: 'and' | 'or' } }>(
     '/api/recommendation/meal-plans',
     { schema: { body: mealPlansBodySchema } },
     async (request, reply) => {
       const people = validatePeople(request.body.people)
-      return reply.code(200).send(recommendMealPlans(people))
+      return reply.code(200).send(
+        recommendMealPlans(people, undefined, {
+          tags: request.body.tags ?? [],
+          tagMode: request.body.tag_mode,
+        }),
+      )
     },
   )
 
