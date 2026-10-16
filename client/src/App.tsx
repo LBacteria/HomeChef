@@ -7,6 +7,7 @@ import DefinitionsPage from './pages/DefinitionsPage'
 import HomePage from './pages/HomePage'
 import InventoryPage from './pages/InventoryPage'
 import RecipesPage from './pages/RecipesPage'
+import RecommendPage from './pages/RecommendPage'
 import SettingsPage from './pages/SettingsPage'
 
 /**
@@ -24,11 +25,27 @@ import SettingsPage from './pages/SettingsPage'
  *   - `settingsVersion`：离开设置页去库存时 +1（临期状态由后端按最新设置计算）
  */
 
-type View = 'home' | 'inventory' | 'definitions' | 'recipes' | 'cooking' | 'settings'
+type View =
+  | 'home'
+  | 'inventory'
+  | 'definitions'
+  | 'recipes'
+  | 'cooking'
+  | 'settings'
+  | 'recommend'
 
 export default function App() {
   const [view, setView] = useState<View>('home')
   const [moreOpen, setMoreOpen] = useState(false)
+
+  /**
+   * v0.2.2：推荐流程创建好会话后，让烹饪页**直接打开这个会话**。
+   *
+   * ⚠️ 只影响「初次进入要展开哪个会话」；烹饪页其余逻辑（列表、加菜、
+   *    步骤、结算）完全沿用，未重写。
+   * ⚠️ 走导航栏的「烹饪」入口时会被清空，仍回到会话列表。
+   */
+  const [cookingInitialSessionId, setCookingInitialSessionId] = useState<number | null>(null)
 
   /** 定义变化计数，用于让库存页重新拉取定义 */
   const [definitionsVersion, setDefinitionsVersion] = useState(0)
@@ -47,10 +64,21 @@ export default function App() {
    */
   function navigate(next: View) {
     setMoreOpen(false)
+    // 走导航进烹饪页 = 看会话列表，清掉「直达某会话」
+    if (next === 'cooking') {
+      setCookingInitialSessionId(null)
+    }
     if (next === 'inventory' && view === 'settings') {
       setSettingsVersion((v) => v + 1)
     }
     setView(next)
+  }
+
+  /** v0.2.2：推荐确认后直达新建的会话 */
+  function openSession(sessionId: number) {
+    setMoreOpen(false)
+    setCookingInitialSessionId(sessionId)
+    setView('cooking')
   }
 
   /* ---------- 主页：独立整屏，不带旧顶部 tabs ---------- */
@@ -62,6 +90,7 @@ export default function App() {
           <MoreToolsPanel
             onClose={() => setMoreOpen(false)}
             onOpenDefinitions={() => navigate('definitions')}
+            onOpenManualCooking={() => navigate('cooking')}
           />
         )}
       </div>
@@ -99,7 +128,13 @@ export default function App() {
             </button>
             <button
               type="button"
-              className={view === 'cooking' ? 'nav-item active' : 'nav-item'}
+              /*
+               * v0.2.2：「推荐」属于烹饪流程的一部分，因此二者共用「烹饪」高亮
+               * （否则处在推荐页时会出现**没有任何导航项高亮**的情况）。
+               */
+              className={
+                view === 'cooking' || view === 'recommend' ? 'nav-item active' : 'nav-item'
+              }
               onClick={() => navigate('cooking')}
             >
               烹饪
@@ -142,7 +177,14 @@ export default function App() {
           <DefinitionsPage onDefinitionsChanged={handleDefinitionsChanged} />
         )}
         {view === 'recipes' && <RecipesPage />}
-        {view === 'cooking' && <CookingPage />}
+        {view === 'cooking' && <CookingPage initialSessionId={cookingInitialSessionId} />}
+        {view === 'recommend' && (
+          <RecommendPage
+            onBack={() => navigate('home')}
+            onApplied={openSession}
+            onManual={() => navigate('cooking')}
+          />
+        )}
         {view === 'settings' && <SettingsPage />}
       </div>
 
@@ -150,6 +192,7 @@ export default function App() {
         <MoreToolsPanel
           onClose={() => setMoreOpen(false)}
           onOpenDefinitions={() => navigate('definitions')}
+          onOpenManualCooking={() => navigate('cooking')}
         />
       )}
     </div>

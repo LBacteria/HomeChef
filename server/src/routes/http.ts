@@ -34,6 +34,9 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   SESSION_STATE_INVALID: 409,
   DISH_NOT_FOUND: 404,
   REVISION_STALE: 409,
+  // v0.2.2 整餐推荐
+  SNAPSHOT_STALE: 409,
+  IDEMPOTENCY_CONFLICT: 409,
 }
 
 /** 统一错误响应体（ARCHITECTURE.md 第 9.2 节） */

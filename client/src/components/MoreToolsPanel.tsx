@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-import { JarIcon } from './icons'
+import { JarIcon, PotIcon } from './icons'
 
 /**
  * 「更多功能」面板（v0.2.1.1 主页改版）。
@@ -27,13 +27,24 @@ interface Props {
   onClose: () => void
   /** 进入食材库（由调用方负责关闭面板与切换视图）*/
   onOpenDefinitions: () => void
+  /**
+   * v0.2.2：手动选菜进入烹饪页。
+   *
+   * 中央「开始烹饪」改为走整餐推荐后，**手动路径必须仍然可达**，
+   * 因此在本面板补一个入口；烹饪页与既有记录功能完全不变。
+   */
+  onOpenManualCooking: () => void
 }
 
 /** 焦点约束的候选元素（与项目其它对话框无关，只在本组件内使用）*/
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-export default function MoreToolsPanel({ onClose, onOpenDefinitions }: Props) {
+export default function MoreToolsPanel({
+  onClose,
+  onOpenDefinitions,
+  onOpenManualCooking,
+}: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null)
   const firstItemRef = useRef<HTMLButtonElement | null>(null)
 
@@ -110,6 +121,15 @@ export default function MoreToolsPanel({ onClose, onOpenDefinitions }: Props) {
               <span className="tool-text">
                 <span className="tool-name">食材库</span>
                 <span className="tool-desc">管理食材定义、别名与允许单位</span>
+              </span>
+            </button>
+          </li>
+          <li>
+            <button type="button" className="tool-item" onClick={onOpenManualCooking}>
+              <PotIcon className="tool-icon" />
+              <span className="tool-text">
+                <span className="tool-name">手动选菜</span>
+                <span className="tool-desc">跳过推荐，自己挑菜谱开做</span>
               </span>
             </button>
           </li>

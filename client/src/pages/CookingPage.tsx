@@ -113,7 +113,16 @@ function displaySessionName(s: {
   return formatDefaultName(s.started_at) || formatDefaultName(s.created_at) || `#${s.id}`
 }
 
-export default function CookingPage() {
+interface CookingPageProps {
+  /**
+   * v0.2.2 整餐推荐：确认后**直达**该会话。
+   *
+   * `null`（默认）＝正常显示会话列表，既有行为完全不变。
+   */
+  initialSessionId?: number | null
+}
+
+export default function CookingPage({ initialSessionId = null }: CookingPageProps = {}) {
   /* ---------- 列表 ---------- */
   const [sessions, setSessions] = useState<CookingSessionSummary[]>([])
   const [listLoading, setListLoading] = useState(true)
@@ -393,6 +402,30 @@ export default function CookingPage() {
       if (seq === detailSeq.current) setDetailLoading(false)
     }
   }, [])
+
+  /**
+   * v0.2.2：推荐流程确认后**直达**新建的会话。
+   *
+   * ⚠️⚠️ 这里**刻意不做「只执行一次」的 ref 守卫** —— 原因是本组件另有一个
+   *      「卸载时作废在途详情请求」的清理 effect（`detailSeq.current++`），
+   *      而 React 18 StrictMode 在开发模式下会把挂载 effect 跑两次
+   *      （挂载 → 清理 → 再挂载）：
+   *
+   *        1) 首次挂载 effect 发出 `openDetail`，拿到 seq = N，请求在途
+   *        2) StrictMode 的**模拟卸载**触发清理 → detailSeq 变成 N+1
+   *        3) 若这里用 ref 阻止第二次执行，就再没人发起加载
+   *        4) 请求返回时 seq(N) !== current(N+1) → 结果被丢弃，
+   *           `setDetailLoading(false)` 也不会执行
+   *           ⇒ **页面永远停在「加载中…」**
+   *
+   *      因此这里让 effect 每次真正运行时都发起加载：后发的请求序号最新，
+   *      自然胜出；被作废的旧响应照旧安全丢弃。生产环境无双重调用，
+   *      行为不变。
+   */
+  useEffect(() => {
+    if (initialSessionId === null) return
+    void openDetail(initialSessionId)
+  }, [initialSessionId, openDetail])
 
   function backToList() {
     detailSeq.current++

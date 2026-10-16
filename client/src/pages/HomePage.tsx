@@ -86,7 +86,13 @@ const ARC = {
   br: arcPath(0 + GAP, 90 - GAP),
 } as const
 
-export type HomeTarget = 'inventory' | 'recipes' | 'settings' | 'cooking' | 'definitions'
+export type HomeTarget =
+  | 'inventory'
+  | 'recipes'
+  | 'settings'
+  | 'cooking'
+  | 'definitions'
+  | 'recommend'
 
 interface Props {
   /** 跳转到内页 */
@@ -165,11 +171,15 @@ export default function HomePage({ onNavigate, onOpenMore }: Props) {
             </span>
           </button>
 
-          {/* 中央：铸铁灶眼 —— 进入现有烹饪页 */}
+          {/*
+            中央：铸铁灶眼 —— v0.2.2 起进入**整餐推荐**流程
+            （人数 → 推荐 → 核对 → 原子创建会话 → 既有烹饪页）。
+            手动选菜入口在「更多功能」面板里，原功能完全保留。
+          */}
           <button
             type="button"
             className="stove-center"
-            onClick={() => onNavigate('cooking')}
+            onClick={() => onNavigate('recommend')}
           >
             <span className="stove-glow" aria-hidden="true" />
             <PotIcon className="stove-center-icon" />

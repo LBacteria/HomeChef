@@ -20,6 +20,9 @@ import {
   validationError,
 } from './errors.js'
 import { QUANTITY_EPSILON, prepareQuantityForWrite, roundQuantity } from './quantity.js'
+import { getSettings } from './settingsService.js'
+import { evaluateExpiryStatus } from './expiryStatusService.js'
+import { todayDateString } from './dates.js'
 
 /**
  * 烹饪会话结算 Service（v0.2.1 B3）。
@@ -200,9 +203,24 @@ function requiredReasonOf(q: Queryable, d: Demand): DishSkipReason | null {
  *   3. id 升序（稳定 tie-breaker）
  *
  * ⚠️ 仅返回 `quantity > 0` 的记录（数量为 0 的无法提供任何扣减）。
+ *
+ * ⚠️⚠️ v0.2.2 修复：**默认排除已过期库存**。
+ *
+ *    此前这里只过滤 `quantity > 0`，而排序又让**最早到期（含已过期）**
+ *    排在最前 —— 结果是：即使冰箱里有新鲜批次，结算也会**优先扣掉过期库存**，
+ *    而且设置项 `allow_expired_for_recipe`（默认 false）**完全没被使用**。
+ *    这与「推荐不将过期视作可用」直接矛盾，也会让用户吃下过期食材。
+ *
+ *    现在的行为（严格遵守既有设置项）：
+ *      - `allow_expired_for_recipe === false`（**默认**）→ 过期批次**不参与扣减**；
+ *      - `true` → 保留原语义（过期批次按到期日升序优先消耗）。
+ *
+ *    注意：若某需求**只能**由过期库存满足，默认设置下会扣减不足 →
+ *    结算以 `INSUFFICIENT_STOCK` **显式失败并整体回滚**，
+ *    绝不会静默吃掉过期食材。
  */
-function availableStockRows(tx: Tx, definitionId: number, unit: string) {
-  return tx
+function availableStockRows(q: Queryable, definitionId: number, unit: string) {
+  const rows = q
     .select()
     .from(standardIngredient)
     .where(
@@ -218,6 +236,31 @@ function availableStockRows(tx: Tx, definitionId: number, unit: string) {
     )
     .all()
     .filter((r) => r.quantity > 0)
+
+  const settings = getSettings()
+  if (settings.allow_expired_for_recipe) {
+    // 用户显式允许用过期食材 → 保留既有排序（过期批次最先消耗）
+    return rows
+  }
+
+  const rule = {
+    mode: settings.expiry_warning_mode,
+    threshold: settings.expiry_warning_threshold,
+  }
+  const today = todayDateString()
+
+  return rows.filter((row) => {
+    const evaluation = evaluateExpiryStatus(
+      {
+        expiry_date: row.expiry_date,
+        purchase_date: row.purchase_date,
+        production_date: row.production_date,
+      },
+      rule,
+      today,
+    )
+    return evaluation.status !== 'expired'
+  })
 }
 
 /**
@@ -514,17 +557,18 @@ export function previewSettlement(sessionId: number): {
 
     const available = d.unit === null
       ? 0
-      : db
-          .select({ quantity: standardIngredient.quantity })
-          .from(standardIngredient)
-          .where(
-            and(
-              eq(standardIngredient.definition_id, d.definition_id),
-              eq(standardIngredient.unit, d.unit),
-            ),
-          )
-          .all()
-          .reduce((sum, r) => roundQuantity(sum + r.quantity), 0)
+      : // ⚠️⚠️ 必须复用**同一套可用库存规则**（条目⑫修复）：
+        //    此前这里直接 sum 全部库存，把**已过期批次**也算进"可扣"，
+        //    于是预览显示「100 过期 + 20 新鲜 = 120」，而实际结算只能扣 20 ——
+        //    预览虚报充足、与实际判定不一致。
+        //    现在与 settleSession 走同一个 `availableStockRows`：
+        //      · 默认排除已过期批次（遵守 allow_expired_for_recipe）
+        //      · 「今天正好到期」不算过期（evaluateExpiryStatus 语义）
+        //      · 只统计 quantity > 0 的记录
+        availableStockRows(db, d.definition_id, d.unit).reduce(
+          (sum, r) => roundQuantity(sum + r.quantity),
+          0,
+        )
 
     const satisfied =
       d.confirmedReason !== null &&

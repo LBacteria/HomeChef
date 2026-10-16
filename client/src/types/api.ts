@@ -593,6 +593,113 @@ export interface SettlementResult {
 }
 
 /* ============================================================
+ * v0.2.2 整餐推荐
+ * ============================================================ */
+
+export type RecommendationLevel = 'ready' | 'nearly' | 'missing'
+
+export type RecommendationRequirementStatus =
+  | 'ok'
+  | 'insufficient'
+  | 'unit_mismatch'
+  | 'unknown_quantity'
+  | 'seasoning_missing'
+
+/** 合并后的一条整餐需求（同食材同单位已合并） */
+export interface RecommendationRequirement {
+  definition_id: number
+  definition_name: string
+  unit: string | null
+  required_quantity: number | null
+  available_quantity: number
+  missing_quantity: number | null
+  status: RecommendationRequirementStatus
+  is_seasoning: boolean
+  used_expiring: boolean
+  expired_excluded_quantity: number
+  /** 后端生成的中文说明 */
+  note: string
+}
+
+/** 每道菜**缩放后**的一条配料（可直接照着备料） */
+export interface RecommendationDishIngredient {
+  definition_id: number
+  definition_name: string
+  /** 已按份数倍数缩放；未指定用量时为 null */
+  quantity: number | null
+  unit: string | null
+  note: string | null
+  is_seasoning: boolean
+}
+
+export interface RecommendationDishStep {
+  step_no: number
+  content: string
+}
+
+export interface RecommendationDish {
+  recipe_id: number
+  recipe_name: string
+  /** 份数倍数（人数 ÷ 基准人数），可直接用于进入烹饪 */
+  servings: number
+  tags: string[]
+  content_revision: number
+  ingredients: RecommendationDishIngredient[]
+  steps: RecommendationDishStep[]
+}
+
+export interface RecommendationPlan {
+  plan_id: string
+  /** 用户确认时的服务端快照指纹；apply 必须原样回传 */
+  snapshot_id: string
+  level: RecommendationLevel
+  score: number
+  dishes: RecommendationDish[]
+  requirements: RecommendationRequirement[]
+  summary: {
+    required_count: number
+    satisfied_count: number
+    missing_count: number
+    main_missing_count: number
+    seasoning_missing_count: number
+    unknown_count: number
+    expiring_used_count: number
+    expired_excluded_count: number
+    coverage: number
+    categories_used: string[]
+    tags_used: string[]
+  }
+  reasons: string[]
+}
+
+/** 整餐推荐结果（POST /api/recommendation/meal-plans） */
+export interface MealPlanResult {
+  people: number
+  base_servings: number
+  multiplier: number
+  dish_count: number
+  candidate_recipe_count: number
+  considered_recipe_count: number
+  candidate_truncated: boolean
+  combinations_evaluated: number
+  truncated: boolean
+  today: string
+  plans: RecommendationPlan[]
+  notes: string[]
+}
+
+/** 进入烹饪结果（POST /api/recommendation/apply） */
+export interface ApplyPlanResult {
+  session_id: number
+  dish_count: number
+  people: number
+  expected_multiplier: number
+  snapshot_id: string
+  /** 同一 request_id 重放时由服务端标注 */
+  idempotent_replay?: boolean
+}
+
+/* ============================================================
  * 错误
  * ============================================================ */
 

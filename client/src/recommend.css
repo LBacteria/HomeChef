@@ -1,0 +1,460 @@
+/**
+ * v0.2.2 整餐推荐页样式。
+ *
+ * 设计约束：
+ *   - 沿用既有暖色中式灶台色系（赭红 / 米白 / 暖橙），不引入新主题；
+ *   - 窄屏（360 / 390px）可用：列表纵向堆叠、需求行可换行，不横向溢出；
+ *   - 只作用于 `.rec-*` 选择器，**不改动任何既有页面样式**。
+ */
+
+.rec-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0 32px;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.rec-lead {
+  margin: 0;
+  color: #5a463a;
+  line-height: 1.6;
+}
+
+.rec-muted {
+  color: #8a7566;
+  font-size: 0.86rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ---------- 人数 ---------- */
+
+.rec-people-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rec-people-chip {
+  min-width: 62px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid #d9c3ae;
+  background: #fffaf4;
+  color: #6b4f3d;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.rec-people-chip.active {
+  border-color: #b4622a;
+  background: #f6e3d4;
+  color: #8c3f12;
+  font-weight: 600;
+}
+
+.rec-people-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rec-people-input input {
+  width: 96px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #d9c3ae;
+  background: #fffdfa;
+  font-size: 1rem;
+}
+
+.rec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.rec-actions button {
+  padding: 10px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* ---------- 候选方案 ---------- */
+
+.rec-notes {
+  margin: 0;
+  padding-left: 18px;
+  color: #8a7566;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.rec-empty {
+  padding: 20px;
+  border: 1px dashed #d9c3ae;
+  border-radius: 12px;
+  background: #fffaf4;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rec-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rec-plan {
+  border: 1px solid #e4d2c1;
+  border-left-width: 5px;
+  border-radius: 12px;
+  background: #fffdfa;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rec-plan-ready {
+  border-left-color: #4f8a4f;
+}
+.rec-plan-nearly {
+  border-left-color: #c99022;
+}
+.rec-plan-missing {
+  border-left-color: #b4553f;
+}
+
+.rec-plan-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.rec-badge {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rec-badge-ready {
+  background: #e6f2e6;
+  color: #33652f;
+}
+.rec-badge-nearly {
+  background: #fbf0d5;
+  color: #8a6410;
+}
+.rec-badge-missing {
+  background: #f8e2dc;
+  color: #8f3a26;
+}
+
+.rec-plan-dishes {
+  font-weight: 600;
+  color: #4a3629;
+  flex: 1 1 200px;
+}
+
+.rec-plan-score {
+  font-size: 0.8rem;
+  color: #9c8878;
+}
+
+.rec-reasons {
+  margin: 0;
+  padding-left: 18px;
+  color: #5a463a;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.rec-plan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 0.84rem;
+  color: #7a6555;
+}
+
+.rec-warn {
+  color: #a4451f;
+  font-weight: 600;
+}
+
+.rec-good {
+  color: #3f7a3f;
+  font-weight: 600;
+}
+
+.rec-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rec-plan-actions button {
+  padding: 8px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* ---------- 需求明细 ---------- */
+
+.rec-req-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rec-req {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) auto auto;
+  grid-template-areas:
+    'name num status'
+    'note note note';
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #faf6f1;
+  border-left: 3px solid #d9c3ae;
+  font-size: 0.88rem;
+}
+
+.rec-req-name {
+  grid-area: name;
+  font-weight: 600;
+  color: #4a3629;
+  overflow-wrap: anywhere;
+}
+.rec-req-num {
+  grid-area: num;
+  color: #6b5a4c;
+  white-space: nowrap;
+}
+.rec-req-status {
+  grid-area: status;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  color: #7a6555;
+}
+.rec-req-note {
+  grid-area: note;
+  color: #8a7566;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.rec-req-ok {
+  border-left-color: #4f8a4f;
+}
+.rec-req-missing {
+  border-left-color: #b4553f;
+  background: #fdf3f0;
+}
+.rec-req-unknown {
+  border-left-color: #c99022;
+  background: #fdf8ec;
+}
+.rec-req-seasoning {
+  border-left-color: #a98a6a;
+}
+
+/* ---------- 核对 ---------- */
+
+.rec-review-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #e4d2c1;
+  border-radius: 12px;
+  background: #fffdfa;
+}
+
+.rec-review-block h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #4a3629;
+}
+
+.rec-dish-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rec-dish-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #faf6f1;
+}
+
+.rec-dish-name {
+  font-weight: 600;
+  color: #4a3629;
+}
+
+.rec-dish-servings {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rec-dish-servings input {
+  width: 84px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #d9c3ae;
+  background: #fffdfa;
+}
+
+.rec-alert {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fdf3ec;
+  border: 1px solid #eccfb8;
+  color: #8f4a20;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.rec-alert-error {
+  background: #fdecea;
+  border-color: #e8b4a8;
+  color: #8c2f1c;
+}
+
+.rec-alert p {
+  margin: 0 0 8px;
+}
+
+/* ---------- 每道菜详情（条目⑨） ---------- */
+
+.rec-dish-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #faf6f1;
+}
+
+.rec-dish-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.rec-dish-row .rec-dish-name {
+  flex: 1 1 120px;
+}
+
+.rec-dish-row button {
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.rec-dish-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffdfa;
+  border: 1px solid #ece0d3;
+}
+
+.rec-dish-detail h4 {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #6b4f3d;
+}
+
+.rec-dish-ing {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rec-dish-ing li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 0.85rem;
+}
+
+.rec-dish-ing-name {
+  color: #4a3629;
+  font-weight: 600;
+  min-width: 5.5em;
+}
+
+.rec-dish-ing-qty {
+  color: #6b5a4c;
+}
+
+.rec-dish-steps {
+  margin: 0;
+  padding-left: 20px;
+  color: #5a463a;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+/* ---------- 窄屏 ---------- */
+
+@media (max-width: 430px) {
+  .rec-page {
+    gap: 12px;
+  }
+
+  .rec-req {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'name status'
+      'num num'
+      'note note';
+  }
+
+  .rec-actions button,
+  .rec-plan-actions button {
+    flex: 1 1 auto;
+  }
+
+  .rec-dish-list li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

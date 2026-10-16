@@ -31,6 +31,9 @@ export type ServiceErrorCode =
   | 'SESSION_STATE_INVALID'
   | 'DISH_NOT_FOUND'
   | 'REVISION_STALE'
+  // v0.2.2 整餐推荐
+  | 'SNAPSHOT_STALE'
+  | 'IDEMPOTENCY_CONFLICT'
 
 /**
  * Service 业务错误。
@@ -200,4 +203,28 @@ export function dishNotFoundError(message: string): ServiceError {
  */
 export function revisionStaleError(message: string): ServiceError {
   return new ServiceError('REVISION_STALE', message)
+}
+
+/**
+ * 推荐快照已过期（HTTP 409）。
+ *
+ * 触发条件：`apply` 时服务端**重新计算的快照指纹**与用户确认时拿到的
+ * `snapshot_id` 不一致 —— 也就是期间菜谱配料、相关库存、食材分类或
+ * 临期设置发生了变化。**绝不静默用新配方开做**，必须让用户重新确认。
+ *
+ * ⚠️ 与 `REVISION_STALE`（菜谱版本）区分开，便于前端给出不同引导。
+ */
+export function snapshotStaleError(message: string): ServiceError {
+  return new ServiceError('SNAPSHOT_STALE', message)
+}
+
+/**
+ * 同一个 `request_id` 被用于**不同的请求内容**（HTTP 409）。
+ *
+ * 触发条件：幂等键已存在，但本次 payload 与首次不同。
+ * 这通常意味着客户端复用了 request_id，属于**客户端错误**，
+ * 必须拒绝而不是猜用户想做什么。
+ */
+export function idempotencyConflictError(message: string): ServiceError {
+  return new ServiceError('IDEMPOTENCY_CONFLICT', message)
 }

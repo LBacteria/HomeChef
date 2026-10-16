@@ -104,10 +104,11 @@ try {
 }
 console.log(`server ${BASE}\n`)
 
-/** 计算相对今天的日期（用 UTC，与后端一致） */
+/** 以本地日历今天为基准，再使用 UTC 做纯日期加减 */
 function shiftDays(days: number): string {
-  const d = new Date()
-  d.setUTCHours(0, 0, 0, 0)
+  const now = new Date()
+  // Anchor on the local calendar day; use UTC only for date arithmetic.
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
   d.setUTCDate(d.getUTCDate() + days)
   return d.toISOString().slice(0, 10)
 }

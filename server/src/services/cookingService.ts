@@ -22,6 +22,7 @@ import {
   sessionStateInvalidError,
   validationError,
 } from './errors.js'
+import { MAX_SERVINGS_MULTIPLIER } from './recommendationConfig.js'
 
 /**
  * 烹饪会话 Service（v0.2.1 B2）。
@@ -596,6 +597,99 @@ export function deleteSessions(rawIds: number[]): { deleted_ids: number[] } {
   })
 
   return { deleted_ids: ids }
+}
+
+/* ============================================================
+ * v0.2.2 整餐推荐 → 原子创建会话
+ * ============================================================ */
+
+/** 进入烹饪时的一道菜（由推荐 API 传入，份数倍数已由服务端算出） */
+export interface SessionDishInput {
+  recipe_id: number
+  servings: number
+}
+
+/**
+ * **原子**创建会话并一次性写入全部菜品（v0.2.2 整餐推荐入口）。
+ *
+ * ⚠️ 为什么需要它：推荐选好一套菜后，若「创建会话」与「逐道加菜」分成
+ *    多个请求，中途失败会留下**半套空会话**（孤儿）。这里把两者放进
+ *    **同一个事务**：任一步失败整体回滚，不会产生半套会话。
+ *
+ * ⚠️ **不预扣任何库存**：库存扣减只发生在既有结算流程（settlementService）。
+ * ⚠️ 菜谱在事务**之前**统一校验存在性；事务内只做插入。
+ * ⚠️ 同一菜谱**不允许**重复出现（推荐侧已保证；这里再兜一层）。
+ *
+ * @throws VALIDATION_ERROR / RECIPE_NOT_FOUND
+ */
+export function createSessionWithDishes(
+  inputs: readonly SessionDishInput[],
+): CookingSessionDetail {
+  if (!Array.isArray(inputs) || inputs.length === 0) {
+    throw validationError('至少需要一道菜才能创建烹饪会话')
+  }
+
+  const seen = new Set<number>()
+  for (const d of inputs) {
+    if (!Number.isInteger(d.recipe_id) || d.recipe_id <= 0) {
+      throw validationError(`非法的菜谱 id：${String(d.recipe_id)}`)
+    }
+    if (typeof d.servings !== 'number' || !Number.isFinite(d.servings) || d.servings <= 0) {
+      throw validationError(`份数必须是大于 0 的有限数字，当前为：${String(d.servings)}`)
+    }
+    if (d.servings > MAX_SERVINGS_MULTIPLIER) {
+      throw validationError(
+        `份数倍数过大：最多 ${MAX_SERVINGS_MULTIPLIER}，当前为 ${d.servings}`,
+      )
+    }
+    if (seen.has(d.recipe_id)) {
+      throw validationError(`同一菜谱重复出现：id=${d.recipe_id}`)
+    }
+    seen.add(d.recipe_id)
+
+    const found = db.select({ id: recipe.id }).from(recipe).where(eq(recipe.id, d.recipe_id)).get()
+    if (!found) {
+      throw recipeNotFoundError(`菜谱不存在：id=${d.recipe_id}`)
+    }
+  }
+
+  const sessionId = db.transaction((tx) => {
+    const timestamp = nowIso()
+
+    const created = tx
+      .insert(cookingSession)
+      .values({
+        status: 'active',
+        recipe_revision: 0,
+        started_at: timestamp,
+        created_at: timestamp,
+        updated_at: timestamp,
+      })
+      .returning({ id: cookingSession.id })
+      .get()
+
+    let order = 0
+    for (const d of inputs) {
+      tx.insert(cookingSessionDish)
+        .values({
+          session_id: created.id,
+          recipe_id: d.recipe_id,
+          servings: d.servings,
+          status: 'pending',
+          current_step_no: null,
+          confirmed_revision: 0,
+          sort_order: order,
+          created_at: timestamp,
+          updated_at: timestamp,
+        })
+        .run()
+      order += 1
+    }
+
+    return created.id
+  })
+
+  return buildDetail(sessionId)
 }
 
 /* ============================================================
