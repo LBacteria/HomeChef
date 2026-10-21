@@ -92,6 +92,20 @@
       "when": 1791926400000,
       "tag": "0012_v023_tags_preference",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1792012800000,
+      "tag": "0013_recommendation_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792099200000,
+      "tag": "0014_tag_taxonomy",
+      "breakpoints": true
     }
   ]
 }

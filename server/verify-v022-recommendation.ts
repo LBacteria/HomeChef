@@ -156,20 +156,26 @@ section('A. 纯算法单测')
   ok('A6 未指定单位 → unit_mismatch', e2.requirements[0].status === 'unit_mismatch')
 }
 
-/* A7 / A8 —— 调味品 presence-only */
+/* A7 / A8 —— 调味品（⚠️ v0.2.4 决策改为中性提醒，原 presence 语义已废弃） */
 {
   const e1 = evaluateCombination(
     [dish(1, 1, [[3, '盐', 5, '克']])],
     stockIndexOf([lot(3, '个', 0)]),
     META,
   )
-  ok('A7 调味品只记有无：数量 0 也算「有」', e1.requirements[0].status === 'ok' && e1.requirements[0].is_seasoning)
+  ok(
+    'A7 调味品只产出一条中性提醒，不再按库存区分「有 / 没有」',
+    e1.requirements[0].status === 'seasoning_reminder' && e1.requirements[0].is_seasoning,
+    String(e1.requirements[0]?.status),
+  )
   const e2 = evaluateCombination([dish(1, 1, [[3, '盐', 5, '克']])], new Map(), META)
   ok(
-    'A8 家里没有该调味品 → seasoning_missing（单独计数）',
-    e2.requirements[0].status === 'seasoning_missing' &&
-      e2.seasoning_missing_count === 1 &&
-      e2.main_missing_count === 0,
+    'A8 v0.2.4：家里没有该调味品也不再算缺口 / 不降级（提醒计数 +1）',
+    e2.seasoning_missing_count === 0 &&
+      e2.main_missing_count === 0 &&
+      e2.unknown_count === 0 &&
+      e2.seasoning_reminder_count === 1,
+    `missing=${e2.seasoning_missing_count} reminder=${e2.seasoning_reminder_count}`,
   )
 }
 

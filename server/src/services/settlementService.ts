@@ -351,6 +351,16 @@ export function settleSession(sessionId: number): SettlementResult {
     // ⚠️ 需求行来自菜谱食材表；菜谱若在会话创建后被删除，
     //    FK ON DELETE RESTRICT 会阻止删除，因此这里无需额外校验。
     for (const d of demands) {
+      /**
+       * ⚠️⚠️ v0.2.4：**调味品不参与结算**。
+       *
+       * 决策：调味品只做备料提醒 —— 不计库存、不扣量。
+       * 因此这里直接跳过：不扣减、不写 `cooking_settlement_item` 行，
+       * **也不伪造** `user_choice` / `consumed 0` 之类的凭证语义。
+       * 旧凭证不动、旧 skip 行保留。
+       */
+      if (isSeasoningDefinition(d.definition_id)) continue
+
       let outcome: SettlementOutcome
       let consumed = 0
 
@@ -460,6 +470,8 @@ export function previewSettlement(sessionId: number): {
     line_key: string | null
     definition_id: number
     definition_name: string
+    /** v0.2.4：调味品只做备料提醒，不计库存、不扣量 */
+    is_seasoning: boolean
     unit: string | null
     required_quantity: number | null
     /**
@@ -525,6 +537,8 @@ export function previewSettlement(sessionId: number): {
     line_key: string | null
     definition_id: number
     definition_name: string
+    /** v0.2.4：调味品只做备料提醒，不计库存、不扣量 */
+    is_seasoning: boolean
     unit: string | null
     required_quantity: number | null
     available_quantity: number
@@ -544,6 +558,40 @@ export function previewSettlement(sessionId: number): {
   let stockSufficient = true
 
   for (const d of demands) {
+    /**
+     * ⚠️⚠️ v0.2.4：调味品在预览里**只做中性提醒**。
+     *
+     * 不看库存、不说「有 / 没有」、不计入 `needing_confirmation`，
+     * 也不占用库存副本（`skipped = true`，不参与 `stock_sufficient`）。
+     * **显式纯零**（无 null 且量 ≤ 0）不提醒。
+     */
+    if (isSeasoningDefinition(d.definition_id)) {
+      const explicitZero = d.quantity !== null && d.quantity <= 0
+      if (!explicitZero) {
+        const seasoningRow = db
+          .select({ name: ingredientDefinition.name })
+          .from(ingredientDefinition)
+          .where(eq(ingredientDefinition.id, d.definition_id))
+          .get()
+        items.push({
+          dish_id: d.dish_id,
+          line_key: d.line_key,
+          definition_id: d.definition_id,
+          definition_name: seasoningRow?.name ?? '(已删除)',
+          is_seasoning: true,
+          unit: d.unit,
+          required_quantity: d.quantity,
+          available_quantity: 0,
+          required_reason: null,
+          confirm_reason: null,
+          confirmed: true,
+          can_consume: false,
+          skipped: true,
+        })
+      }
+      continue
+    }
+
     const requiredReason = requiredReasonOf(db, d)
 
     const satisfied = requiredReason !== null && isSatisfiedBy(requiredReason, d.confirmedReason)
@@ -604,6 +652,7 @@ export function previewSettlement(sessionId: number): {
       line_key: d.line_key,
       definition_id: d.definition_id,
       definition_name: definitionRow?.name ?? '(已删除)',
+      is_seasoning: false,
       unit: d.unit,
       required_quantity: d.quantity,
       available_quantity: available,

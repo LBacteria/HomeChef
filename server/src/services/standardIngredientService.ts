@@ -1,4 +1,4 @@
-import { and, eq, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
 import { SEASONING_CATEGORY_NAME, ingredientDefinition, standardIngredient } from '../db/schema.js'
@@ -862,6 +862,84 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
 export function deleteStock(id: number): void {
   getStockById(id)
   db.delete(standardIngredient).where(eq(standardIngredient.id, id)).run()
+}
+
+/** 批量删除的**单次上限**（前后端共用同一数字，避免 UI 能选到、接口却拒绝） */
+export const MAX_BULK_STOCK_DELETE = 2000
+
+/** SQLite 变量数安全分块（远低于 999，留足余量） */
+const BULK_DELETE_CHUNK = 400
+
+export interface BulkDeleteStockResult {
+  /** 去重后实际删除的库存记录 id（升序） */
+  deleted_ids: number[]
+}
+
+function chunkOf<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
+/**
+ * 批量删除**库存记录**（v0.2.4）。
+ *
+ * 语义（与单条删除一致，只是原子化）：
+ *   - 删除对象是 `standard_ingredient` 的具体批次 id，**不是** definition；
+ *     食材定义、别名、允许单位、菜谱、历史一律不受影响。
+ *   - 重复 id 去重；非法 id（非正整数）整批拒绝。
+ *   - **任何一个 id 不存在 → 整批不删**（同一事务内先全量校验再删）。
+ *   - 分块查询/删除只是因为 SQLite 变量数限制，仍然在**同一个事务**里。
+ *
+ * @throws VALIDATION_ERROR / INGREDIENT_NOT_FOUND
+ */
+export function deleteStocks(ids: readonly number[]): BulkDeleteStockResult {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw validationError('至少选择一条库存记录')
+  }
+  if (ids.length > MAX_BULK_STOCK_DELETE) {
+    throw validationError(`一次最多删除 ${MAX_BULK_STOCK_DELETE} 条库存记录`)
+  }
+
+  const unique: number[] = []
+  const seen = new Set<number>()
+  for (const raw of ids) {
+    if (!Number.isInteger(raw) || raw <= 0) {
+      throw validationError(`非法的库存记录 ID：${String(raw)}`)
+    }
+    if (!seen.has(raw)) {
+      seen.add(raw)
+      unique.push(raw)
+    }
+  }
+
+  return db.transaction((tx) => {
+    const found: number[] = []
+    for (const chunk of chunkOf(unique, BULK_DELETE_CHUNK)) {
+      const rows = tx
+        .select({ id: standardIngredient.id })
+        .from(standardIngredient)
+        .where(inArray(standardIngredient.id, chunk))
+        .all()
+      for (const row of rows) found.push(row.id)
+    }
+
+    if (found.length !== unique.length) {
+      const foundSet = new Set(found)
+      const missing = unique.filter((id) => !foundSet.has(id))
+      throw notFoundError(
+        `有 ${missing.length} 条库存记录不存在，已整批取消删除：` +
+          missing.slice(0, 10).join(', ') +
+          (missing.length > 10 ? ' …' : ''),
+      )
+    }
+
+    for (const chunk of chunkOf(unique, BULK_DELETE_CHUNK)) {
+      tx.delete(standardIngredient).where(inArray(standardIngredient.id, chunk)).run()
+    }
+
+    return { deleted_ids: unique.slice().sort((a, b) => a - b) }
+  })
 }
 
 /* ============================================================

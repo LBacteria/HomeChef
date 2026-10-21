@@ -88,6 +88,22 @@ export function deleteInventory(id: number): Promise<void> {
   return request<void>(`/ingredients/${id}`, { method: 'DELETE' })
 }
 
+/** 批量删除的**单次上限**（与后端 `MAX_BULK_STOCK_DELETE` 保持一致） */
+export const MAX_BULK_STOCK_DELETE = 2000
+
+/**
+ * 批量删除**库存记录**（不是 definition）。
+ *
+ * ⚠️ 后端在同一事务内先校验全部 id：任何一条不存在 → **整批不删**。
+ * ⚠️ 重复 id 由后端去重。
+ */
+export function deleteInventoryBulk(ids: readonly number[]): Promise<{ deleted_ids: number[] }> {
+  return request<{ deleted_ids: number[] }>('/ingredients/bulk-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  })
+}
+
 /**
  * 消耗库存。
  *

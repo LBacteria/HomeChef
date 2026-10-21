@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { listDefinitions } from '../api/definitions'
 import { listCategories } from '../api/categories'
 import {
+  MAX_BULK_STOCK_DELETE,
   consumeInventory,
   createInventory,
   deleteInventory,
+  deleteInventoryBulk,
   listInventory,
   updateInventory,
 } from '../api/inventory'
@@ -190,7 +192,17 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
     return map
   }, [categories])
 
+  /**
+   * v0.2.4：请求序号。
+   *
+   * ⚠️ 快速切换分类/搜索时，**旧请求可能晚于新请求返回**。
+   *    只接受「最新一次加载」的结果，避免用过期数据覆盖当前列表，
+   *    进而让批量选择的范围变成另一个分类的记录。
+   */
+  const loadSeqRef = useRef(0)
+
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     setLoadError(null)
 
@@ -201,6 +213,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
         listDefinitions(),
         listCategories(),
       ])
+      if (seq !== loadSeqRef.current) return // 过期响应：直接丢弃
       setRecords(stock)
       setDefinitions(defs)
       setCategories(cats)
@@ -209,9 +222,10 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
         prev !== null && !cats.some((c) => c.id === prev) ? null : prev,
       )
     } catch (error) {
+      if (seq !== loadSeqRef.current) return
       setLoadError(error instanceof Error ? error.message : String(error))
     } finally {
-      setLoading(false)
+      if (seq === loadSeqRef.current) setLoading(false)
     }
   }, [sortField, sortOrder, selectedCategoryId])
 
@@ -243,6 +257,123 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
       return (def?.name ?? '').toLowerCase().includes(needle)
     })
   }, [records, definitionMap, search])
+
+  /* ============================================================
+   * v0.2.4：批量选择与批量删除（只针对**当前可见**的库存批次）
+   * ============================================================ */
+
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
+  const [bulkConfirm, setBulkConfirm] = useState(false)
+
+  /** 可见记录 id 集合（全选范围只在这里面，绝不包含被筛选/搜索隐藏的行） */
+  const visibleIdSet = useMemo(
+    () => new Set(visibleRecords.map((r) => r.id)),
+    [visibleRecords],
+  )
+
+  /**
+   * 列表/筛选/搜索变化后，**清理已不在可见范围内的选中项**。
+   * ⚠️ 后端请求在途时也保持这一不变量，避免拿旧范围去删。
+   */
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev
+      const next = new Set([...prev].filter((id) => visibleIdSet.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [visibleIdSet])
+
+  /** 卸载时让在途请求失效，避免 setState 到已卸载组件 / 旧数据回填 */
+  useEffect(
+    () => () => {
+      loadSeqRef.current++
+    },
+    [],
+  )
+
+  /** 批量删除的同步锁（state 更新是异步的，防止连点重复提交） */
+  const bulkBusyRef = useRef(false)
+
+  const selectedCount = selectedIds.size
+  const allVisibleSelected =
+    visibleRecords.length > 0 && visibleRecords.every((r) => selectedIds.has(r.id))
+
+  function exitSelectionMode() {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+    setBulkError(null)
+    setBulkConfirm(false)
+  }
+
+  function toggleSelected(id: number) {
+    setBulkError(null)
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  /** 全选 = 仅当前**可见**记录；超过单次上限时只选前 N 条并提示 */
+  function toggleSelectAllVisible() {
+    setBulkError(null)
+    if (allVisibleSelected) {
+      setSelectedIds(new Set())
+      return
+    }
+    const ids = visibleRecords.map((r) => r.id)
+    if (ids.length > MAX_BULK_STOCK_DELETE) {
+      setSelectedIds(new Set(ids.slice(0, MAX_BULK_STOCK_DELETE)))
+      setBulkError(`一次最多删除 ${MAX_BULK_STOCK_DELETE} 条，已选中前 ${MAX_BULK_STOCK_DELETE} 条。`)
+      return
+    }
+    setSelectedIds(new Set(ids))
+  }
+
+  async function handleBulkDelete() {
+    if (bulkBusyRef.current || bulkBusy || loading) return // 同步锁 + 加载中禁删
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    if (ids.length > MAX_BULK_STOCK_DELETE) {
+      setBulkError(`一次最多删除 ${MAX_BULK_STOCK_DELETE} 条。`)
+      return
+    }
+
+    /**
+     * ⚠️ 删除前再核一次「选中 ⊆ 当前可见」：
+     *    隐藏项（被筛选/搜索/刷新挤掉的记录）绝不能被发送出去。
+     *    一旦范围变化就取消确认、保留可见部分，让用户重新确认。
+     */
+    const hidden = ids.filter((id) => !visibleIdSet.has(id))
+    if (hidden.length > 0) {
+      setBulkConfirm(false)
+      setSelectedIds(new Set(ids.filter((id) => visibleIdSet.has(id))))
+      setBulkError('选择范围已变化（部分记录已不在当前列表），已取消本次删除，请重新确认。')
+      return
+    }
+
+    bulkBusyRef.current = true
+    setBulkBusy(true)
+    setBulkError(null)
+    try {
+      await deleteInventoryBulk(ids)
+      setBulkConfirm(false)
+      setSelectedIds(new Set())
+      setSelectionMode(false)
+      await load()
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : String(e))
+      // 失败时保持选中，便于用户核对后重试；范围变化由上面的清理 effect 兜底
+      setBulkConfirm(false)
+    } finally {
+      bulkBusyRef.current = false
+      setBulkBusy(false)
+    }
+  }
 
   const groups = useMemo(() => groupByDefinition(visibleRecords), [visibleRecords])
 
@@ -322,16 +453,61 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
     <section>
       <div className="section-header">
         <h2>当前库存</h2>
-        <button
-          type="button"
-          className="primary"
-          disabled={definitions.length === 0}
-          onClick={() => setDialog({ kind: 'create' })}
-          title={definitions.length === 0 ? '请先在食材库中添加食材' : undefined}
-        >
-          + 添加库存
-        </button>
+        <div className="section-header-actions">
+          {!selectionMode && (
+            <button
+              type="button"
+              disabled={loading || visibleRecords.length === 0}
+              onClick={() => {
+                setSelectionMode(true)
+                setSelectedIds(new Set())
+                setBulkError(null)
+              }}
+              title={visibleRecords.length === 0 ? '当前没有可选择的库存记录' : undefined}
+            >
+              批量选择
+            </button>
+          )}
+          <button
+            type="button"
+            className="primary"
+            disabled={definitions.length === 0 || selectionMode}
+            onClick={() => setDialog({ kind: 'create' })}
+            title={definitions.length === 0 ? '请先在食材库中添加食材' : undefined}
+          >
+            + 添加库存
+          </button>
+        </div>
       </div>
+
+      {/* v0.2.4：批量选择条 —— 全选范围只限**当前可见**记录 */}
+      {selectionMode && (
+        <div className="bulk-bar">
+          <span className="bulk-count">
+            已选 {selectedCount} 条（当前可见 {visibleRecords.length} 条）
+          </span>
+          <button
+            type="button"
+            disabled={loading || visibleRecords.length === 0}
+            onClick={toggleSelectAllVisible}
+          >
+            {allVisibleSelected ? '取消全选' : '全选可见'}
+          </button>
+          <button
+            type="button"
+            className="danger"
+            disabled={selectedCount === 0 || bulkBusy || loading}
+            onClick={() => setBulkConfirm(true)}
+          >
+            {bulkBusy ? '删除中…' : `删除选中（${selectedCount}）`}
+          </button>
+          <button type="button" disabled={bulkBusy} onClick={exitSelectionMode}>
+            取消
+          </button>
+          {loading && <span className="hint">正在刷新列表，暂不可删除</span>}
+          {bulkError !== null && <p className="bulk-error">{bulkError}</p>}
+        </div>
+      )}
 
       <div className="with-category-filter">
         {/* 左侧：分类筛选（与食材库共用同一套 category 数据） */}
@@ -444,7 +620,19 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
                     // 调味品：只显示「有」，不显示数量/单位/日期/储存方式
                     const seasoning = record.is_seasoning === true
                     return (
-                      <li key={record.id} className="record-item">
+                      <li
+                        key={record.id}
+                        className={`record-item${selectionMode && selectedIds.has(record.id) ? ' record-item-selected' : ''}`}
+                      >
+                        {selectionMode && (
+                          <input
+                            type="checkbox"
+                            className="record-select"
+                            checked={selectedIds.has(record.id)}
+                            onChange={() => toggleSelected(record.id)}
+                            aria-label={`选择库存记录 ${record.id}`}
+                          />
+                        )}
                         <div className="record-main">
                           {seasoning ? (
                             <p className="record-quantity">
@@ -494,6 +682,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
                           {record.note && <p className="record-meta">备注：{record.note}</p>}
                         </div>
 
+                        {!selectionMode && (
                         <div className="record-actions">
                           <button
                             type="button"
@@ -524,6 +713,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
                             删除
                           </button>
                         </div>
+                        )}
                       </li>
                     )
                   })}
@@ -578,6 +768,25 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
           )}（${definitionMap.get(dialog.record.definition_id)?.name ?? '库存记录'}）`}
           onConfirm={() => handleDelete(dialog.record.id)}
           onCancel={closeDialog}
+        />
+      )}
+
+      {bulkConfirm && (
+        <ConfirmDeleteDialog
+          title="删除选中的库存记录"
+          description={
+            <>
+              <p>
+                确定删除选中的 <strong>{selectedCount}</strong> 条库存记录吗？
+              </p>
+              <p className="hint">
+                只删除这些库存批次，不会删除食材定义、菜谱或烹饪记录。
+                若其中任意一条已不存在，整批都不会删除。
+              </p>
+            </>
+          }
+          onConfirm={handleBulkDelete}
+          onCancel={() => setBulkConfirm(false)}
         />
       )}
     </section>

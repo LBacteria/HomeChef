@@ -351,6 +351,54 @@
   color: #8c2f1c;
 }
 
+/* v0.2.4：主菜 / 配菜标签（角色由后端给出，前端只渲染） */
+.rec-role-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.rec-role-main {
+  background: #f6e3c8;
+  border: 1px solid #dfc09a;
+  color: #7a4a13;
+}
+
+.rec-role-side {
+  background: #eef1f4;
+  border: 1px solid #d8dee4;
+  color: #54606b;
+}
+
+.rec-main-dish {
+  color: #6f4310;
+}
+
+/* 候选卡里的配菜标记：比确认页更小更轻，避免每道菜都抢眼 */
+.rec-role-tag-compact {
+  margin-right: 0;
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 0.66rem;
+  opacity: 0.85;
+}
+
+/* v0.2.4：调味品备料提醒 —— 中性信息，不是警告，也不是缺口 */
+.rec-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f4f6f8;
+  border: 1px solid #dde3e8;
+  color: #4a5560;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
 .rec-alert p {
   margin: 0 0 8px;
 }

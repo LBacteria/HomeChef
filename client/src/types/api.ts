@@ -434,7 +434,8 @@ export type RecipeTagCategoryCode =
   | 'dish_type'
   | 'flavor'
   | 'cooking_method'
-  | 'meal_scene'
+  /** v0.2.4：原 `meal_scene`（用餐场景）已由「菜系风格」取代 */
+  | 'cuisine'
   | 'feature'
 
 /** 分类字典（GET /api/tag-categories）——**后端是唯一来源** */
@@ -607,7 +608,12 @@ export interface SkipConfirmationInput {
 
 /* ---------- 结算 ---------- */
 
-/** 派生确认原因：`seasoning_presence` **只存在于计算与展示**，落库时映射为 `user_choice` */
+/**
+ * 派生确认原因。
+ *
+ * ⚠️ v0.2.4 起 `seasoning_presence` **不再产生**（调味品免确认），
+ *    保留该取值仅用于兼容旧响应/旧数据的类型判断。
+ */
 export type DerivedSkipReason = DishSkipReason | 'seasoning_presence'
 
 /** 结算预览中的一项（GET .../settle/preview） */
@@ -616,6 +622,13 @@ export interface SettlementPreviewItem {
   line_key: string | null
   definition_id: number
   definition_name: string
+  /**
+   * v0.2.4：调味品行只做**备料提醒**。
+   *
+   * ⚠️ 不计库存、不扣量、不需要确认：`required_reason` / `confirm_reason` 恒为 null，
+   *    `skipped` 为 true 但**不代表**用户选择跳过（`available_quantity` 也不代表库存）。
+   */
+  is_seasoning: boolean
   unit: string | null
   required_quantity: number | null
   /**
@@ -689,7 +702,10 @@ export type RecommendationRequirementStatus =
   | 'insufficient'
   | 'unit_mismatch'
   | 'unknown_quantity'
+  /** ⚠️ v0.2.4 起不再产生（仅兼容旧数据） */
   | 'seasoning_missing'
+  /** v0.2.4：调味品中性提醒（自行准备，不计库存） */
+  | 'seasoning_reminder'
 
 /** 合并后的一条整餐需求（同食材同单位已合并） */
 export interface RecommendationRequirement {
@@ -726,6 +742,10 @@ export interface RecommendationDishStep {
 export interface RecommendationDish {
   recipe_id: number
   recipe_name: string
+  /**
+   * v0.2.4：本餐中的角色。**后端是唯一权威**，前端只渲染，不自行推断。
+   */
+  role_in_meal: 'main' | 'side'
   /** 份数倍数（人数 ÷ 基准人数），可直接用于进入烹饪 */
   servings: number
   tags: string[]
@@ -781,6 +801,8 @@ export interface RecommendationShortage {
 
 export interface RecommendationPlan {
   plan_id: string
+  /** v0.2.4：本套方案唯一的主菜锚点（对应 dishes 里 role_in_meal==='main' 的那道） */
+  main_dish_recipe_id: number
   /** 用户确认时的服务端快照指纹；apply 必须原样回传 */
   snapshot_id: string
   level: RecommendationLevel

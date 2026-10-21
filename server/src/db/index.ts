@@ -41,6 +41,13 @@ sqlite.pragma('foreign_keys = ON')
 // WAL 模式：本地单进程应用下读写更稳，减少写锁等待。
 sqlite.pragma('journal_mode = WAL')
 
+/*
+ * ⚠️ v0.2.4：推荐 apply 用 `BEGIN IMMEDIATE` 串行化并发写。
+ *    没有 busy_timeout 时，第二个写者会**立刻**拿到 SQLITE_BUSY 而失败；
+ *    这里给 5 秒让步窗口（本地单机场景足够，远小于任何请求超时）。
+ */
+sqlite.pragma('busy_timeout = 5000')
+
 export const db = drizzle(sqlite, { schema })
 
 export { databasePath, sqlite }

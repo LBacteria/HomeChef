@@ -418,6 +418,49 @@ button.danger:hover:not(:disabled) {
   border-top: none;
 }
 
+/* ---------- v0.2.4：库存批量选择 ---------- */
+
+.section-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid #d8cfc4;
+  border-radius: 10px;
+  background: #faf6f1;
+}
+
+.bulk-count {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.bulk-error {
+  flex: 1 1 100%;
+  margin: 0;
+  color: #8c2f1c;
+  font-size: 0.86rem;
+}
+
+.record-select {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 2px 0 0;
+  align-self: flex-start;
+}
+
+.record-item-selected {
+  background: #fdf6ec;
+}
+
 .record-main {
   min-width: 0;
   flex: 1 1 240px;

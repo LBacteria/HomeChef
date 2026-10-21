@@ -1196,6 +1196,42 @@ export const cookingSessionDishSkip = sqliteTable(
   ],
 )
 
+/**
+ * v0.2.4：整餐推荐 apply 的**持久化幂等回执**（receipt）。
+ *
+ * 语义（简单明确，不做时间淘汰）：
+ *   - `request_id` 主键：同一 key 只可能有一条回执；
+ *   - 同 key 同载荷 → 原样重放 `response_json`（**首次响应的稳定快照**，
+ *     绝不用后来被改动的会话重建）；
+ *   - 同 key 异载荷 → 409；
+ *   - 回执与会话创建**同一事务**写入，任何失败整体回滚；
+ *   - `session_id` 外键 ON DELETE CASCADE：用户主动删除会话时，
+ *     该 `request_id` 的去重保证随之结束（文档写明，不是缺陷）；
+ *   - 不设 TTL / 条数上限：家庭本地量级不值得为时间淘汰牺牲可靠性。
+ */
+export const recommendationRequest = sqliteTable(
+  'recommendation_request',
+  {
+    request_id: text('request_id').primaryKey(),
+
+    /** 影响「建什么会话」的规范化载荷哈希（people + snapshot + 排序后的菜） */
+    payload_hash: text('payload_hash').notNull(),
+
+    session_id: integer('session_id')
+      .notNull()
+      .references(() => cookingSession.id, {
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
+      }),
+
+    /** 首次成功响应的 JSON（重放时原样返回，不再重算） */
+    response_json: text('response_json').notNull(),
+
+    created_at: text('created_at').notNull(),
+  },
+  (table) => [index('recommendation_request_session_id_idx').on(table.session_id)],
+)
+
 /* ============================================================
  * 类型导出
  * ============================================================ */
@@ -1242,3 +1278,7 @@ export type CookingSettlementItem = typeof cookingSettlementItem.$inferSelect
 export type NewCookingSettlementItem = typeof cookingSettlementItem.$inferInsert
 export type CookingSessionDishSkip = typeof cookingSessionDishSkip.$inferSelect
 export type NewCookingSessionDishSkip = typeof cookingSessionDishSkip.$inferInsert
+
+/* ---- v0.2.4 推荐创建会话的持久化幂等 ---- */
+export type RecommendationRequest = typeof recommendationRequest.$inferSelect
+export type NewRecommendationRequest = typeof recommendationRequest.$inferInsert

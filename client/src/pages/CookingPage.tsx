@@ -677,9 +677,8 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
         dish_id: it.dish_id,
         line_key: it.line_key as string,
         /**
-         * ⚠️ v0.2.3（R2）：`seasoning_presence` 是**派生**原因，不能落库。
-         *    必须使用后端给的 `confirm_reason`（调味品映射为既有的 `user_choice`）；
-         *    只有用户**真实点击确认**才会走到这里。
+         * ⚠️ 只处理后端给出的必需项（`null_quantity` / `unit_mismatch`）。
+         *    v0.2.4 起调味品不再产生必需项，也不会出现在这个列表里。
          */
         reason: (it.confirm_reason ?? it.required_reason) as DishSkipReason,
       }))
@@ -1270,6 +1269,8 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
                 <div className="cooking-preview">
                   <p className="cooking-preview-summary">
                     共 {preview.items.length} 项需求
+                    {preview.items.some((it) => it.is_seasoning) &&
+                      `（其中 ${preview.items.filter((it) => it.is_seasoning).length} 项调味品不计库存、不扣量）`}
                     {preview.needing_confirmation > 0
                       ? ` · ${preview.needing_confirmation} 项需要确认`
                       : ' · 无需额外确认'}
@@ -1287,17 +1288,28 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
                     <tbody>
                       {preview.items.map((it, idx) => (
                         <tr key={`${it.dish_id}-${it.line_key ?? idx}`}>
-                          <td>{it.definition_name}</td>
+                          <td>
+                            {it.definition_name}
+                            {it.is_seasoning && <span className="cooking-hint">（调味品）</span>}
+                          </td>
                           <td>
                             {it.required_quantity === null
                               ? '未指定'
                               : `${it.required_quantity} ${it.unit ?? ''}`}
                           </td>
                           <td>
-                            {it.available_quantity} {it.unit ?? ''}
+                            {it.is_seasoning
+                              ? '—'
+                              : `${it.available_quantity} ${it.unit ?? ''}`}
                           </td>
                           <td>
-                            {it.required_reason !== null && !it.confirmed ? (
+                            {/*
+                              v0.2.4：调味品只做备料提醒 —— 不计库存、不扣量、不需要确认。
+                              绝不能走"需确认"或"已跳过（用户选择）"的文案。
+                            */}
+                            {it.is_seasoning ? (
+                              <span className="cooking-hint">备料提醒（不计库存）</span>
+                            ) : it.required_reason !== null && !it.confirmed ? (
                               <span className="cooking-need-confirm">
                                 需确认：{REASON_LABEL[it.required_reason]}
                               </span>
@@ -1374,6 +1386,10 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
                       </li>
                     ))}
                   </ul>
+                  {/* v0.2.4：新结算只列计库存项；旧凭证保留，不暗示被删 */}
+                  <p className="cooking-hint">
+                    新结算只列计库存的食材；调味品自行准备，不扣库存。历史记录保留原样。
+                  </p>
                 </div>
               )}
             </div>

@@ -187,9 +187,12 @@ const stock: Array<[number, number, string, string | null, string | null]> = [
   [5, 500, '毫升', day(-3), 'manual'], // 已过期 → 推荐时不计入可用
 ]
 
-/** 自定义标签（演示「与预设同等可增改删」）：一个带分类、一个未分类 */
+/**
+ * 自定义标签（演示「与预设同等可增改删」）：一个带分类、一个未分类。
+ * ⚠️ v0.2.4：`meal_scene` 已不存在，这里改用 `feature`。
+ */
 const customTags: Array<{ name: string; category: string | null }> = [
-  { name: '减脂餐', category: 'meal_scene' },
+  { name: '减脂餐', category: 'feature' },
   { name: '妈妈的味道', category: null },
 ]
 /** 自定义标签挂到菜谱上 */

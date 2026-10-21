@@ -2,7 +2,9 @@
  * v0.2.3 食谱 Tag —— **五大固定分类**与系统预设。
  *
  * 设计原则：
- *   1. **固定五类**：菜品类型 / 口味 / 烹饪方式 / 用餐场景 / 菜品特点。
+ *   1. **固定五类**：菜品类型 / 口味 / 烹饪方式 / 菜系风格 / 菜品特点。
+ *      ⚠️ v0.2.4：原「用餐场景」（`meal_scene`，早餐/午餐/晚餐/夜宵）已移除，
+ *      改为「菜系风格」（`cuisine`）—— 用户反馈「麻婆豆腐贴晚餐很怪」。
  *      分类本身不可由用户新增（不做任意维度管理），只维护分类下的 Tag。
  *   2. **稳定 code**：分类用英文 code 落库，界面用中文别名字典渲染；
  *      系统预设 Tag 另有 `code`（如 `dish_type.staple`），
@@ -18,7 +20,7 @@ export const RECIPE_TAG_CATEGORIES = [
   'dish_type',
   'flavor',
   'cooking_method',
-  'meal_scene',
+  'cuisine',
   'feature',
 ] as const
 
@@ -29,7 +31,7 @@ export const RECIPE_TAG_CATEGORY_LABELS: Record<RecipeTagCategory, string> = {
   dish_type: '菜品类型',
   flavor: '口味',
   cooking_method: '烹饪方式',
-  meal_scene: '用餐场景',
+  cuisine: '菜系风格',
   feature: '菜品特点',
 }
 
@@ -199,6 +201,8 @@ export const PRESET_RECIPE_TAGS: readonly PresetTag[] = [
   { name: '咸鲜', category: 'flavor', code: 'flavor.savory', sort_order: 50 },
   { name: '蒜香', category: 'flavor', code: 'flavor.garlic', sort_order: 60 },
   { name: '五香', category: 'flavor', code: 'flavor.five_spice', sort_order: 70 },
+  { name: '香辣', category: 'flavor', code: 'flavor.fragrant_spicy', sort_order: 80 },
+  { name: '酱香', category: 'flavor', code: 'flavor.soy_aroma', sort_order: 90 },
 
   /* ---- 烹饪方式 ---- */
   { name: '炒', category: 'cooking_method', code: 'method.stir_fry', sort_order: 10 },
@@ -211,16 +215,32 @@ export const PRESET_RECIPE_TAGS: readonly PresetTag[] = [
   { name: '凉拌', category: 'cooking_method', code: 'method.cold_dress', sort_order: 80 },
   { name: '焖', category: 'cooking_method', code: 'method.braise', sort_order: 90 },
   { name: '煲', category: 'cooking_method', code: 'method.simmer', sort_order: 100 },
+  { name: '卤', category: 'cooking_method', code: 'method.marinate_stew', sort_order: 110 },
 
-  /* ---- 用餐场景 ---- */
-  { name: '早餐', category: 'meal_scene', code: 'scene.breakfast', sort_order: 10 },
-  { name: '午餐', category: 'meal_scene', code: 'scene.lunch', sort_order: 20 },
-  { name: '晚餐', category: 'meal_scene', code: 'scene.dinner', sort_order: 30 },
-  { name: '夜宵', category: 'meal_scene', code: 'scene.supper', sort_order: 40 },
+  /* ---- 菜系风格（v0.2.4 取代「用餐场景」） ---- */
+  { name: '家常中式', category: 'cuisine', code: 'cuisine.homestyle', sort_order: 10 },
+  { name: '川菜', category: 'cuisine', code: 'cuisine.sichuan', sort_order: 20 },
+  { name: '粤菜', category: 'cuisine', code: 'cuisine.cantonese', sort_order: 30 },
+  { name: '湘菜', category: 'cuisine', code: 'cuisine.hunan', sort_order: 40 },
+  { name: '鲁菜', category: 'cuisine', code: 'cuisine.shandong', sort_order: 50 },
+  { name: '江浙菜', category: 'cuisine', code: 'cuisine.jiangzhe', sort_order: 60 },
+  { name: '闽菜', category: 'cuisine', code: 'cuisine.fujian', sort_order: 70 },
+  { name: '东北菜', category: 'cuisine', code: 'cuisine.northeast', sort_order: 80 },
+  { name: '西北菜', category: 'cuisine', code: 'cuisine.northwest', sort_order: 90 },
+  { name: '意式', category: 'cuisine', code: 'cuisine.italian', sort_order: 110 },
+  { name: '美式', category: 'cuisine', code: 'cuisine.american', sort_order: 120 },
+  { name: '法式', category: 'cuisine', code: 'cuisine.french', sort_order: 130 },
+  { name: '地中海', category: 'cuisine', code: 'cuisine.mediterranean', sort_order: 140 },
+  { name: '西式家常', category: 'cuisine', code: 'cuisine.western_home', sort_order: 150 },
 
   /* ---- 菜品特点 ---- */
   { name: '快手菜', category: 'feature', code: 'feature.quick', sort_order: 10 },
   { name: '低脂', category: 'feature', code: 'feature.low_fat', sort_order: 20 },
   { name: '高蛋白', category: 'feature', code: 'feature.high_protein', sort_order: 30 },
   { name: '高纤维', category: 'feature', code: 'feature.high_fiber', sort_order: 40 },
+  { name: '下饭', category: 'feature', code: 'feature.rice_friendly', sort_order: 50 },
+  { name: '一锅出', category: 'feature', code: 'feature.one_pot', sort_order: 60 },
+  { name: '便当', category: 'feature', code: 'feature.bento', sort_order: 70 },
+  { name: '家常', category: 'feature', code: 'feature.homely', sort_order: 80 },
+  { name: '酥脆', category: 'feature', code: 'feature.crispy', sort_order: 90 },
 ]

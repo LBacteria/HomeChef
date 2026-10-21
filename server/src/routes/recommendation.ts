@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 
-import { createSessionWithDishes } from '../services/cookingService.js'
+import { db } from '../db/index.js'
+import { recommendationRequest } from '../db/schema.js'
+import { createSessionWithDishesTx } from '../services/cookingService.js'
 import {
   assertRecipesExist,
   assertSnapshotFresh,
@@ -10,8 +13,6 @@ import {
   validatePeople,
 } from '../services/recommendationService.js'
 import {
-  IDEMPOTENCY_MAX_ENTRIES,
-  IDEMPOTENCY_TTL_MS,
   MAX_PEOPLE,
   MAX_SERVINGS_MULTIPLIER,
   MIN_PEOPLE,
@@ -27,7 +28,8 @@ import { idempotencyConflictError, validationError } from '../services/errors.js
  *
  * ⚠️ 推荐接口是**纯读**接口，绝不写库。
  * ⚠️ `apply` 是唯一写入口：**原子**创建会话 + 全部菜品、**不预扣库存**、
- *     带**快照校验**（菜谱/库存/设置变了就 409）和**有界幂等**。
+ *     带**快照校验**（菜谱/库存/设置变了就 409）和
+ *     **持久化幂等**（v0.2.4：回执入库、同事务写入、不随时间淘汰）。
  */
 
 /** 生成整餐推荐 */
@@ -80,47 +82,39 @@ const applyPlanBodySchema = {
 } as const
 
 /* ============================================================
- * 有界幂等表（进程内）
+ * 持久化幂等（v0.2.4）
  * ============================================================
  *
- * ⚠️ 为什么放在进程内而不是数据库：
- *    需求明确「不迁库」，且这是**幂等去重**而非业务数据。
- * ⚠️ 明确局限（不得隐瞒）：
- *    1. **重启即失效** —— 进程重启后同一个 request_id 会被当成新请求，
- *       可能再创建一个会话。因此前端**不得自动重试写操作**，
- *       只允许用户在明确看到失败提示后手动重试。
- *    2. 多实例部署时各自独立，不共享。
- *    3. 条目有 TTL 与数量上限；淘汰后同样失去去重能力。
+ * ⚠️ v0.2.3 及更早：进程内 `Map` + 10 分钟 TTL + 200 条上限。
+ *    局限是硬伤：进程重启、多实例、TTL 过期、条目被淘汰 → 同一
+ *    `request_id` 会被当成新请求，**再建一个会话**。
+ *
+ * v0.2.4 改成 SQLite 表 `recommendation_request`：
+ *   - `request_id` 主键 → 同一 key 只有一条回执，唯一约束兜底并发；
+ *   - 回执与「创建会话 + 菜品」在**同一个 `BEGIN IMMEDIATE` 事务**内写入；
+ *   - **不做时间淘汰**（不设 TTL / 条数上限）：家庭本地量级，
+ *     可靠性优先；进程重启后同 key 依旧原样重放；
+ *   - `session_id` 外键 `ON DELETE CASCADE`：用户主动删除该会话后，
+ *     这条去重记录随之删除 —— 去重保证到此结束（预期语义）。
+ *
+ * ⚠️ 不导出任何「清表」函数：这条表是持久业务数据，
+ *    不能给路由层一个能误清真实库的入口；测试请在隔离库里自行清理。
  */
 
-interface IdempotencyEntry {
-  payloadHash: string
-  response: Record<string, unknown>
-  expiresAt: number
-}
-
-const idempotencyStore = new Map<string, IdempotencyEntry>()
-
-function pruneIdempotency(now: number): void {
-  for (const [key, entry] of idempotencyStore) {
-    if (entry.expiresAt <= now) idempotencyStore.delete(key)
-  }
-  // 仍然超上限 → 按插入顺序（Map 保序）淘汰最旧的
-  while (idempotencyStore.size > IDEMPOTENCY_MAX_ENTRIES) {
-    const oldest = idempotencyStore.keys().next()
-    if (oldest.done) break
-    idempotencyStore.delete(oldest.value)
-  }
-}
-
-/** 仅用于测试：清空幂等表 */
-export function clearIdempotencyStore(): void {
-  idempotencyStore.clear()
-}
-
+/** 影响「建什么会话」的规范化载荷哈希（people + snapshot + 排序后的菜） */
 function hashPayload(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
 }
+
+/** apply 的稳定响应字段（回执里存的就这一份，重放时原样返回） */
+interface ApplyPlanResponse {
+  session_id: number
+  dish_count: number
+  people: number
+  expected_multiplier: number
+  snapshot_id: string
+}
+
 
 export function registerRecommendationRoutes(app: FastifyInstance): void {
   /**
@@ -197,10 +191,6 @@ export function registerRecommendationRoutes(app: FastifyInstance): void {
         }
       }
 
-      /* ---------- 幂等 ---------- */
-      const now = Date.now()
-      pruneIdempotency(now)
-
       const payloadHash = hashPayload({
         people,
         snapshot_id,
@@ -209,47 +199,86 @@ export function registerRecommendationRoutes(app: FastifyInstance): void {
           .map((d) => ({ recipe_id: d.recipe_id, servings: d.servings })),
       })
 
-      const existing = idempotencyStore.get(request_id)
-      if (existing !== undefined) {
-        if (existing.payloadHash !== payloadHash) {
-          throw idempotencyConflictError(
-            '同一个 request_id 被用于不同的请求内容，已拒绝。请换一个新的 request_id 重试。',
+      /**
+       * 一个 `BEGIN IMMEDIATE` 事务内完成：
+       *   ① 查回执（命中 → 同载荷原样重放 / 异载荷 409）
+       *   ② 菜谱存在性 + 快照一致性
+       *   ③ 创建会话与菜品
+       *   ④ 写回执
+       * 任一失败 → 整体回滚，绝不留下「建了会话却没有回执」的半套状态。
+       *
+       * ⚠️ `IMMEDIATE` 一开始就拿写锁：并发请求被串行化，
+       *    后到者在锁释放后能读到先到者的回执，因此不会重复建会话。
+       * ⚠️ **不在事务内吞唯一约束异常**：万一真的冲突，让它上抛，
+       *    把刚建好的会话与菜品一起回滚；吞掉再返回 winner 会提交孤立重复会话。
+       */
+      const outcome = db.transaction(
+        (tx) => {
+          const existing = tx
+            .select()
+            .from(recommendationRequest)
+            .where(eq(recommendationRequest.request_id, request_id))
+            .get()
+
+          if (existing !== undefined) {
+            if (existing.payload_hash !== payloadHash) {
+              throw idempotencyConflictError(
+                '同一个 request_id 被用于不同的请求内容，已拒绝。请换一个新的 request_id 重试。',
+              )
+            }
+            return {
+              replayed: true as const,
+              response: JSON.parse(existing.response_json) as ApplyPlanResponse,
+            }
+          }
+
+          // ⚠️ 校验收在事务内：与建会话读到的是同一份状态
+          assertRecipesExist(dishes.map((d) => d.recipe_id))
+          assertSnapshotFresh({
+            people,
+            snapshot_id,
+            dishes: dishes.map((d) => ({ recipe_id: d.recipe_id, servings: d.servings })),
+          })
+
+          const detail = createSessionWithDishesTx(
+            tx,
+            dishes.map((d) => ({ recipe_id: d.recipe_id, servings: d.servings })),
           )
-        }
-        return reply
-          .code(200)
-          .send({ ...existing.response, idempotent_replay: true })
-      }
 
-      /* ---------- 菜谱存在性 + 快照一致性 ---------- */
-      assertRecipesExist(dishes.map((d) => d.recipe_id))
-      assertSnapshotFresh({
-        people,
-        snapshot_id,
-        dishes: dishes.map((d) => ({ recipe_id: d.recipe_id, servings: d.servings })),
-      })
+          const response: ApplyPlanResponse = {
+            session_id: detail.id,
+            dish_count: detail.dishes.length,
+            people,
+            expected_multiplier: multiplierFor(people),
+            snapshot_id,
+          }
 
-      /* ---------- 原子创建 ---------- */
-      const detail = createSessionWithDishes(
-        dishes.map((d) => ({ recipe_id: d.recipe_id, servings: d.servings })),
+          /**
+           * ⚠️ 这里**不做**唯一约束兜底：一旦冲突就让它抛出去，
+           *    整个事务（含刚建好的会话与菜品）一起回滚。
+           *    `BEGIN IMMEDIATE` 已把并发串行化，后到者在本事务内就能读到先到者的回执；
+           *    在事务里吞异常再返回 winner，会把**重复创建但未回滚**的会话提交掉。
+           */
+          tx.insert(recommendationRequest)
+            .values({
+              request_id,
+              payload_hash: payloadHash,
+              session_id: detail.id,
+              response_json: JSON.stringify(response),
+              created_at: new Date().toISOString(),
+            })
+            .run()
+
+          return { replayed: false as const, response }
+        },
+        { behavior: 'immediate' },
       )
 
-      const response = {
-        session_id: detail.id,
-        dish_count: detail.dishes.length,
-        people,
-        expected_multiplier: multiplierFor(people),
-        snapshot_id,
-      }
-
-      pruneIdempotency(Date.now())
-      idempotencyStore.set(request_id, {
-        payloadHash,
-        response,
-        expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
-      })
-
-      return reply.code(200).send(response)
+      return reply
+        .code(200)
+        .send(
+          outcome.replayed ? { ...outcome.response, idempotent_replay: true } : outcome.response,
+        )
     },
   )
 }

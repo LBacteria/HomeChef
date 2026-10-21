@@ -139,17 +139,25 @@ section('A. 纯函数单测')
     RECIPE_TAG_CATEGORIES.join('、'),
   )
 
-  const migrationSql = readFileSync(
-    resolve(process.cwd(), 'drizzle', '0012_v023_tags_preference.sql'),
-    'utf8',
-  )
+  /**
+   * v0.2.4：标签体系由 0012（初版预设）+ 0014（移除时段、新增菜系等）共同决定。
+   * A2 比对的是**应用迁移后的有效预设清单**，不再只拿 0012 的 code 对配置。
+   */
   const codesInSql = new Set<string>()
-  for (const m of migrationSql.matchAll(/'([a-z_]+\.[a-z_]+)'/g)) codesInSql.add(m[1])
+  for (const file of ['0012_v023_tags_preference.sql', '0014_tag_taxonomy.sql']) {
+    const sql = readFileSync(resolve(process.cwd(), 'drizzle', file), 'utf8')
+    for (const m of sql.matchAll(/'([a-z_]+\.[a-z_]+)'/g)) codesInSql.add(m[1])
+  }
+  // 0014 明确删除的四条系统时段标签
+  for (const removed of ['scene.breakfast', 'scene.lunch', 'scene.dinner', 'scene.supper']) {
+    codesInSql.delete(removed)
+  }
+
   const codesInConfig = new Set(PRESET_RECIPE_TAGS.map((p) => p.code))
   const missingInSql = [...codesInConfig].filter((c) => !codesInSql.has(c))
   const extraInSql = [...codesInSql].filter((c) => !codesInConfig.has(c))
   ok(
-    'A2 迁移 SQL 的预设 code 与配置清单**完全一致**（防漂移）',
+    'A2 应用 0012+0014 后的有效预设 code 与配置清单一致（防漂移）',
     missingInSql.length === 0 && extraInSql.length === 0,
     `missing=${JSON.stringify(missingInSql)} extra=${JSON.stringify(extraInSql)}`,
   )
@@ -260,7 +268,7 @@ section('A. 纯函数单测')
   )
 }
 
-/* ---------- A11–A13：调味品 presence（v0.2.2 审计修复） ---------- */
+/* ---------- A11–A13：调味品（v0.2.4 决策：库存状态不再影响结论，只出中性提醒） ---------- */
 {
   const onlyExpired = evaluateCombination(
     [dish(1, 1, [[3, '盐', 1, '克']])],
@@ -268,9 +276,10 @@ section('A. 纯函数单测')
     META,
   )
   ok(
-    'A11 调味品**只剩过期批次** → seasoning_missing（v0.2.2 审计项已修复）',
-    onlyExpired.requirements[0].status === 'seasoning_missing' &&
-      onlyExpired.seasoning_missing_count === 1,
+    'A11 调味品只剩过期批次 → 仍是中性提醒，不是缺口',
+    onlyExpired.requirements[0].status === 'seasoning_reminder' &&
+      onlyExpired.seasoning_missing_count === 0 &&
+      onlyExpired.seasoning_reminder_count === 1,
     onlyExpired.requirements[0].status,
   )
 
@@ -280,8 +289,9 @@ section('A. 纯函数单测')
     META,
   )
   ok(
-    'A12 调味品 quantity=0 但未过期 → 仍然算「有」（presence 语义保留）',
-    zeroButFresh.requirements[0].status === 'ok' && zeroButFresh.seasoning_missing_count === 0,
+    'A12 调味品 quantity=0 → 出中性提醒，且不声称「家里有」',
+    zeroButFresh.requirements[0].status === 'seasoning_reminder' &&
+      zeroButFresh.seasoning_missing_count === 0,
     zeroButFresh.requirements[0].status,
   )
 
@@ -291,10 +301,8 @@ section('A. 纯函数单测')
     META,
   )
   ok(
-    'A13 过期 + 未过期混合 → 算「有」，且不把过期量算作临期消耗',
-    mixed.requirements[0].status === 'ok' &&
-      mixed.requirements[0].used_expiring === false &&
-      mixed.expiring_used_count === 0,
+    'A13 过期 + 未过期混合 → 不把过期量算作临期消耗，也不声明消耗',
+    mixed.requirements[0].used_expiring === false && mixed.expiring_used_count === 0,
   )
 }
 
@@ -870,10 +878,12 @@ section('A. 纯函数单测')
     META,
   )
   ok(
-    'A47 调味品：presence 判「有」，但 used_expiring 恒为 false（不虚报临期收益）',
-    seasoningExpiring.requirements[0].status === 'ok' &&
+    'A47 调味品：v0.2.4 起为中性 seasoning_reminder，且 used_expiring 恒为 false（不虚报临期收益、免扣）',
+    seasoningExpiring.requirements[0].status === 'seasoning_reminder' &&
       seasoningExpiring.expiring_used_count === 0 &&
+      seasoningExpiring.expiring_ratio === 0 &&
       seasoningExpiring.requirements[0].used_expiring === false,
+    `${seasoningExpiring.requirements[0]?.status}/${seasoningExpiring.expiring_used_count}`,
   )
   const seasoningExpiredOnly = evaluateCombination(
     [dish(1, 1, [[3, '盐', 1, '克']])],
@@ -883,9 +893,9 @@ section('A. 纯函数单测')
     META,
   )
   ok(
-    'A48 调味品：只有过期批次 → 判缺失（过期不可用）',
-    seasoningExpiredOnly.requirements[0].status === 'seasoning_missing' &&
-      seasoningExpiredOnly.seasoning_missing_count === 1,
+    'A48 调味品：只有过期批次 → v0.2.4 起仍只出中性提醒，不是缺口',
+    seasoningExpiredOnly.requirements[0].status === 'seasoning_reminder' &&
+      seasoningExpiredOnly.seasoning_missing_count === 0,
   )
 }
 
@@ -912,14 +922,19 @@ section('A. 纯函数单测')
       }) === 'unit_mismatch',
   )
   ok(
-    'A50 非零调味品**一律**派生 seasoning_presence（不依赖单位/数量）；user_choice 满足任何必需项',
+    'A50 v0.2.4：调味品**一律**免确认（不论单位/数量/是否「适量」）；旧 user_choice 仍被识别为满足',
     deriveRequiredReason({ is_seasoning: true, required_quantity: 2, has_unit_matched_lot: true }) ===
-      'seasoning_presence' &&
+      null &&
       deriveRequiredReason({
         is_seasoning: true,
         required_quantity: 2,
         has_unit_matched_lot: false,
-      }) === 'seasoning_presence' &&
+      }) === null &&
+      deriveRequiredReason({
+        is_seasoning: true,
+        required_quantity: null,
+        has_unit_matched_lot: false,
+      }) === null &&
       isSatisfiedBy('null_quantity', 'user_choice') === true &&
       isSatisfiedBy('unit_mismatch', 'user_choice') === true &&
       isSatisfiedBy('seasoning_presence', 'user_choice') === true,
@@ -1475,11 +1490,12 @@ try {
   )
   const gapPlan = gapRes.body.plans[0]
   ok(
-    'B12b 缺口清单非空且与主缺口数一致',
+    'B12b 缺口清单非空且与主缺口数一致（v0.2.4：调味品不进缺口，seasoning 恒 0）',
     Array.isArray(gapPlan.shortages) &&
       gapPlan.shortages.length > 0 &&
-      gapPlan.shortages.length ===
-        gapPlan.summary.main_missing_count + gapPlan.summary.seasoning_missing_count,
+      gapPlan.shortages.length === gapPlan.summary.main_missing_count &&
+      gapPlan.summary.seasoning_missing_count === 0 &&
+      gapPlan.shortages.every((s: any) => !s.is_seasoning),
     `shortages=${gapPlan.shortages.length} main=${gapPlan.summary.main_missing_count} seasoning=${gapPlan.summary.seasoning_missing_count}`,
   )
   ok(
@@ -1819,7 +1835,7 @@ try {
     count('select count(*) c from standard_ingredient where definition_id = 9') === zeroStockBefore,
   )
 
-  section('B19. R2：同单位调味哨兵必须要求明确确认，确认后 skipped_user 且不按量扣减')
+  section('B19. v0.2.4：调味品改为中性提醒 —— 免确认、不扣量、不写凭证行')
   const seasoningCategoryId = (
     mut.prepare("select id from category where name = '调味品'").get() as any
   ).id
@@ -1835,36 +1851,30 @@ try {
   const pv20 = await req('GET', '/api/cooking/sessions/20/settle/preview')
   const seaItem = pv20.body.items.find((i: any) => i.definition_id === 20)
   ok(
-    'B19 调味哨兵（同单位 quantity 0）→ 派生 seasoning_presence、confirm_reason=user_choice、必须确认',
-    seaItem?.required_reason === 'seasoning_presence' &&
-      seaItem?.confirm_reason === 'user_choice' &&
-      pv20.body.needing_confirmation === 1,
+    'B19 调味品在预览里标记 is_seasoning，且 required_reason / confirm_reason 均为 null',
+    seaItem?.is_seasoning === true &&
+      seaItem?.required_reason === null &&
+      seaItem?.confirm_reason === null &&
+      seaItem?.skipped === true,
     JSON.stringify(seaItem),
   )
-  const settle20a = await req('POST', '/api/cooking/sessions/20/settle', {})
   ok(
-    'B19b 未确认 → 结算被拒（REVISION_STALE；既不硬失败也不按量扣减）',
-    settle20a.status === 409 && settle20a.body?.error?.code === 'REVISION_STALE',
-    `${settle20a.status}/${settle20a.body?.error?.code}`,
+    'B19b 调味品不计入待确认，预览直接 ready',
+    pv20.body.needing_confirmation === 0 && pv20.body.ready === true,
+    `nc=${pv20.body.needing_confirmation} ready=${pv20.body.ready}`,
   )
 
-  await req('POST', '/api/cooking/sessions/20/skips', {
-    confirmations: [
-      { dish_id: seaItem.dish_id, line_key: seaItem.line_key, reason: 'user_choice' },
-    ],
-  })
-  const pv20b = await req('GET', '/api/cooking/sessions/20/settle/preview')
+  const settle20a = await req('POST', '/api/cooking/sessions/20/settle', {})
+  const seaResult = (settle20a.body?.items ?? []).find((i: any) => i.definition_id === 20)
   ok(
-    'B19c 用户真实确认后：无待确认、ready',
-    pv20b.body.needing_confirmation === 0 && pv20b.body.ready === true,
-    `nc=${pv20b.body.needing_confirmation}`,
+    'B19c 无需任何确认即可结算成功',
+    settle20a.status === 200,
+    `${settle20a.status}/${JSON.stringify(settle20a.body?.error ?? null)}`,
   )
-  const settle20b = await req('POST', '/api/cooking/sessions/20/settle', {})
-  const seaResult = (settle20b.body?.items ?? []).find((i: any) => i.definition_id === 20)
   ok(
-    'B19d 结算成功且**如实记 skipped_user**（不按量扣减、不伪造 consumed）',
-    settle20b.status === 200 && seaResult?.outcome === 'skipped_user',
-    `${settle20b.status}/${JSON.stringify(seaResult)}`,
+    'B19d 结算明细里没有调味品行（不伪造 user_choice / consumed 0）',
+    seaResult === undefined && (settle20a.body?.items ?? []).length === 0,
+    JSON.stringify(settle20a.body?.items),
   )
   ok(
     'B19e 调味哨兵库存未被改动（仍为 0）',

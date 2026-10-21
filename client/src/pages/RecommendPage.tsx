@@ -45,7 +45,10 @@ const STATUS_LABEL: Record<string, string> = {
   insufficient: '不足',
   unit_mismatch: '单位不匹配',
   unknown_quantity: '用量未指定',
-  seasoning_missing: '缺调味品',
+  /** 兼容旧数据；v0.2.4 起的响应不再出现 */
+  seasoning_missing: '调味品自行准备',
+  /** v0.2.4：中性提醒 —— 不计库存、不扣量 */
+  seasoning_reminder: '调味品自行准备',
 }
 
 /** 菜品类型角色 → 中文（后端只给 code） */
@@ -75,7 +78,8 @@ interface ApplyErrorState {
 function statusClass(r: RecommendationRequirement): string {
   if (r.status === 'ok') return 'rec-req rec-req-ok'
   if (r.status === 'unknown_quantity') return 'rec-req rec-req-unknown'
-  if (r.status === 'seasoning_missing') return 'rec-req rec-req-seasoning'
+  if (r.status === 'seasoning_missing' || r.status === 'seasoning_reminder')
+    return 'rec-req rec-req-seasoning'
   return 'rec-req rec-req-missing'
 }
 
@@ -373,8 +377,8 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
         setApplyError({
           kind: 'unknown',
           message:
-            '网络请求的结果不确定，服务端可能已经创建了会话。请先到「烹饪 / 烹饪记录」里确认；' +
-            '若确实没有，可在服务未重启的情况下点击「重试」。若服务重启过，请先核对记录，避免重复创建。',
+            '结果暂未确认，你可以在当前页面点击「重试」，不会重复创建。' +
+            '若已刷新或离开页面，请先到「烹饪记录」查看。',
         })
       }
     } finally {
@@ -621,8 +625,26 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
               <li key={p.plan_id} className={`rec-plan rec-plan-${p.level}`}>
                 <div className="rec-plan-head">
                   <span className={`rec-badge rec-badge-${p.level}`}>{LEVEL_LABEL[p.level]}</span>
+                  {/* v0.2.4：主菜先展示并加标签；其余按后端顺序（配菜） */}
                   <span className="rec-plan-dishes">
-                    {p.dishes.map((d) => d.recipe_name).join(' + ')}
+                    {p.dishes.map((d, i) => (
+                      <span key={d.recipe_id}>
+                        {i > 0 && ' + '}
+                        {d.role_in_meal === 'main' ? (
+                          <strong className="rec-main-dish">
+                            {d.recipe_name}
+                            <span className="rec-role-tag rec-role-main">主菜</span>
+                          </strong>
+                        ) : (
+                          <span>
+                            {d.recipe_name}
+                            <span className="rec-role-tag rec-role-side rec-role-tag-compact">
+                              配菜
+                            </span>
+                          </span>
+                        )}
+                      </span>
+                    ))}
                   </span>
                   <span className="rec-plan-score">得分 {p.score}</span>
                 </div>
@@ -771,6 +793,10 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
             return (
               <li key={d.recipe_id} className="rec-dish-item">
                 <div className="rec-dish-row">
+                  {/* v0.2.4：角色由后端给出，前端不猜 */}
+                  <span className={`rec-role-tag rec-role-${d.role_in_meal}`}>
+                    {d.role_in_meal === 'main' ? '主菜' : '配菜'}
+                  </span>
                   <span className="rec-dish-name">{d.recipe_name}</span>
                   <span className="rec-muted">{d.servings} 倍量</span>
                   <button
@@ -876,9 +902,20 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
           有 {plan.summary.unknown_count} 项用量未指定（如「适量」），结算时需要你逐项确认。
         </p>
       )}
-      {plan.summary.seasoning_missing_count > 0 && (
-        <p className="rec-alert">缺 {plan.summary.seasoning_missing_count} 项调味品，可按家里情况自行处理。</p>
-      )}
+      {(() => {
+        /**
+         * v0.2.4：调味品只做中性提醒 —— 不计库存、不扣量、不影响能否开做。
+         * ⚠️ 不根据库存说「有 / 没有」。
+         */
+        const reminders = plan.requirements.filter((r) => r.status === 'seasoning_reminder')
+        if (reminders.length === 0) return null
+        return (
+          <p className="rec-note">
+            调味品 {reminders.length} 项（{reminders.slice(0, 4).map((r) => r.definition_name).join('、')}
+            ）请自行准备：不计库存、也不扣量。
+          </p>
+        )
+      })()}
 
       {applyError !== null && (
         <div className="rec-alert rec-alert-error">

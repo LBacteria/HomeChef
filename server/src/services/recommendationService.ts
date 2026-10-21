@@ -6,10 +6,16 @@
  */
 
 import { createHash } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { asc, eq, inArray } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
-import { category, ingredientDefinition, recipe } from '../db/schema.js'
+import {
+  category,
+  ingredientDefinition,
+  recipe,
+  recipeIngredient,
+  recipeStep,
+} from '../db/schema.js'
 import {
   DEFAULT_RECIPE_BASE_SERVINGS,
   HISTORY_HALF_LIFE_DAYS,
@@ -21,7 +27,6 @@ import {
   MEAL_SIZE_BY_PEOPLE,
   MIN_PEOPLE,
   MIN_PLANS,
-  OVERLAP_PENALTY,
 } from './recommendationConfig.js'
 import {
   enumerateCombinations,
@@ -55,12 +60,20 @@ import {
 } from './recommendationRanking.js'
 import type { PlanOrderKey, PlanSoftSignals, PreferenceValue } from './recommendationRanking.js'
 import { getPreferenceMap } from './preferenceService.js'
+import {
+  mainDishAnchorOf,
+  mainIngredientIdsOf,
+  sideComplementScore,
+} from './mainDish.js'
+import { selectDistinctMainPlans } from './planSelection.js'
+import type { SelectablePlan } from './planSelection.js'
 import { loadCookingHistory } from './cookingHistoryService.js'
 import type { CookingHistory } from './cookingHistoryService.js'
 import { DISH_ROLE_LABELS } from './tagConfig.js'
 import { evaluateExpiryStatus } from './expiryStatusService.js'
 import { getSettings } from './settingsService.js'
 import { getRecipeById, listRecipes, listTagRefsByRecipeIds } from './recipeService.js'
+import type { RecipeTagRef } from './recipeService.js'
 import { listStock } from './standardIngredientService.js'
 import { todayDateString } from './dates.js'
 import { recipeNotFoundError, snapshotStaleError, validationError } from './errors.js'
@@ -88,6 +101,8 @@ export interface RecommendationDishStep {
 export interface RecommendationDish {
   recipe_id: number
   recipe_name: string
+  /** v0.2.4：本餐中的角色（后端唯一权威，前端不猜） */
+  role_in_meal: 'main' | 'side'
   /** 份数倍数（= 人数 ÷ 基准人数） */
   servings: number
   tags: string[]
@@ -130,6 +145,11 @@ export interface RecommendationSignals {
 export interface RecommendationPlan {
   /** 稳定标识：recipe_id×servings 的升序拼接 */
   plan_id: string
+  /**
+   * v0.2.4：本套方案的**唯一主菜锚点**（`dishes` 里必有且只有一条
+   * `role_in_meal === 'main'` 与之对应）。
+   */
+  main_dish_recipe_id: number
   /**
    * 快照指纹：apply 时必须原样回传。
    *
@@ -367,12 +387,123 @@ function loadAllCandidates(filter: MealPlanFilter): { all: LoadedRecipe[]; withI
     .filter((r) => r.ingredient_count > 0)
     .sort((a, b) => a.id - b.id)
 
-  const tagRefs = listTagRefsByRecipeIds(summaries.map((s) => s.id))
+  const ids = summaries.map((s) => s.id)
+  const tagRefs = listTagRefsByRecipeIds(ids)
+  const loaded = loadRecipesBulk(ids, tagRefs)
 
   return {
-    all: summaries.map((s) => loadRecipe(s.id, tagRefs.get(s.id) ?? [])),
+    all: ids.map((id) => loaded.get(id)!).filter((r) => r !== undefined),
     withIngredients: summaries.length,
   }
+}
+
+/** inArray 参数安全分块（SQLite 变量数上限远高于此，留足余量） */
+const BULK_LOAD_CHUNK = 400
+
+function chunkIds(ids: readonly number[], size: number): number[][] {
+  const out: number[][] = []
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size))
+  return out
+}
+
+/**
+ * v0.2.4：**批量**加载菜谱候选（菜谱 / 配料 / 步骤各 1 条查询）。
+ *
+ * 为什么需要：1200 道菜时逐菜 `getRecipeById` 会产生约 5000 条 SQL。
+ *
+ * ⚠️ 语义必须与 `loadRecipe` 完全一致：
+ *   - 配料按 `sort_order` 升序、其次 `id` 升序；
+ *   - 步骤按 `step_no` 升序、其次 `id` 升序；
+ *   - Tag 名称按关联记录 id 升序（由 `listTagRefsByRecipeIds` 保证）；
+ *   - 不在 id 列表里的菜谱不会凭空出现。
+ */
+function loadRecipesBulk(
+  ids: readonly number[],
+  tagRefs: Map<number, RecipeTagRef[]>,
+): Map<number, LoadedRecipe> {
+  const result = new Map<number, LoadedRecipe>()
+  if (ids.length === 0) return result
+
+  const linesByRecipe = new Map<number, RecipeLineInput[]>()
+  const stepsByRecipe = new Map<number, Array<{ step_no: number; content: string }>>()
+  const metaById = new Map<number, { name: string; content_revision: number }>()
+
+  for (const chunk of chunkIds(ids, BULK_LOAD_CHUNK)) {
+    for (const row of db
+      .select({ id: recipe.id, name: recipe.name, content_revision: recipe.content_revision })
+      .from(recipe)
+      .where(inArray(recipe.id, chunk))
+      .all()) {
+      metaById.set(row.id, { name: row.name, content_revision: row.content_revision })
+    }
+
+    for (const row of db
+      .select({
+        recipe_id: recipeIngredient.recipe_id,
+        definition_id: recipeIngredient.definition_id,
+        definition_name: ingredientDefinition.name,
+        quantity: recipeIngredient.quantity,
+        unit: recipeIngredient.unit,
+        note: recipeIngredient.note,
+        sort_order: recipeIngredient.sort_order,
+      })
+      .from(recipeIngredient)
+      .innerJoin(
+        ingredientDefinition,
+        eq(ingredientDefinition.id, recipeIngredient.definition_id),
+      )
+      .where(inArray(recipeIngredient.recipe_id, chunk))
+      .orderBy(
+        asc(recipeIngredient.recipe_id),
+        asc(recipeIngredient.sort_order),
+        asc(recipeIngredient.id),
+      )
+      .all()) {
+      const line: RecipeLineInput = {
+        definition_id: row.definition_id,
+        definition_name: row.definition_name,
+        quantity: row.quantity,
+        unit: row.unit,
+        note: row.note,
+        sort_order: row.sort_order,
+      }
+      const list = linesByRecipe.get(row.recipe_id)
+      if (list) list.push(line)
+      else linesByRecipe.set(row.recipe_id, [line])
+    }
+
+    for (const row of db
+      .select({
+        recipe_id: recipeStep.recipe_id,
+        step_no: recipeStep.step_no,
+        content: recipeStep.content,
+      })
+      .from(recipeStep)
+      .where(inArray(recipeStep.recipe_id, chunk))
+      .orderBy(asc(recipeStep.recipe_id), asc(recipeStep.step_no), asc(recipeStep.id))
+      .all()) {
+      const step = { step_no: row.step_no, content: row.content }
+      const list = stepsByRecipe.get(row.recipe_id)
+      if (list) list.push(step)
+      else stepsByRecipe.set(row.recipe_id, [step])
+    }
+  }
+
+  for (const id of ids) {
+    const meta = metaById.get(id)
+    if (meta === undefined) continue
+    const refs = tagRefs.get(id) ?? []
+    result.set(id, {
+      recipe_id: id,
+      recipe_name: meta.name,
+      tags: refs.map((r) => r.name),
+      tag_refs: refs.map((r) => ({ name: r.name, category: r.category, code: r.code })),
+      content_revision: meta.content_revision,
+      steps: stepsByRecipe.get(id) ?? [],
+      lines: linesByRecipe.get(id) ?? [],
+    })
+  }
+  return result
 }
 
 /* ============================================================
@@ -485,7 +616,15 @@ function canonicalSnapshotPayload(
         definition_id: id,
         is_seasoning: ctx.meta.get(id)?.is_seasoning ?? false,
         category_name: ctx.meta.get(id)?.category_name ?? null,
-        lots: (ctx.stock.get(id) ?? [])
+        /**
+         * ⚠️ v0.2.4：**调味品的批次不参与快照**。
+         *
+         * 调味品不计库存、不扣量，只做备料提醒 —— 改盐的库存数量
+         * 不应该让用户确认过的整餐快照失效。
+         * 但 `is_seasoning` / `category_name` 仍保留：
+         * 把某个食材从「调味品」改成普通分类（或反过来）会改变语义，**必须**失效。
+         */
+        lots: (ctx.meta.get(id)?.is_seasoning === true ? [] : (ctx.stock.get(id) ?? []))
           .map((l) => [l.unit, l.quantity, l.expiry_status])
           .sort((a, b) => {
             const ua = String(a[0])
@@ -569,13 +708,13 @@ function fmtQty(n: number): string {
  *    因此不谎报一个「差多少克」的数字。
  */
 function buildShortages(evaluation: PlanEvaluation): RecommendationShortage[] {
+  /**
+   * ⚠️ v0.2.4：调味品**不进缺口清单**。
+   *    它只做中性备料提醒（见 `seasoning_reminder`），
+   *    既不占库存、也不影响能否开做，不能出现在「缺什么」里。
+   */
   return evaluation.requirements
-    .filter(
-      (r) =>
-        r.status === 'insufficient' ||
-        r.status === 'unit_mismatch' ||
-        r.status === 'seasoning_missing',
-    )
+    .filter((r) => r.status === 'insufficient' || r.status === 'unit_mismatch')
     .map((r) => ({
       definition_id: r.definition_id,
       definition_name: r.definition_name,
@@ -595,10 +734,11 @@ function buildReasons(
   soft: PlanSoftSignals,
 ): string[] {
   const reasons: string[] = []
-  const clean =
-    evaluation.main_missing_count === 0 &&
-    evaluation.seasoning_missing_count === 0 &&
-    evaluation.unknown_count === 0
+  /**
+   * ⚠️ v0.2.4：调味品不计入「是否全足」。
+   *    它不占库存、不扣量，因此不能说「没记着有盐 → 不能直接开做」。
+   */
+  const clean = evaluation.main_missing_count === 0 && evaluation.unknown_count === 0
 
   if (clean) {
     reasons.push(`${dishes.length} 道菜的主要食材库存都够，可以直接开做。`)
@@ -624,9 +764,20 @@ function buildReasons(
           `仍需核对，结算时需逐项确认。`,
       )
     }
-    if (evaluation.seasoning_missing_count > 0) {
-      reasons.push(`还缺 ${evaluation.seasoning_missing_count} 项调味品。`)
-    }
+  }
+
+  /**
+   * ⚠️ v0.2.4：调味品只做**中性提醒**。
+   *    不根据库存说「家里有 / 没有」，也不写进缺口或「能不能开做」的结论里。
+   */
+  const seasoningReminders = evaluation.requirements
+    .filter((r) => r.status === 'seasoning_reminder')
+    .map((r) => r.definition_name)
+  if (seasoningReminders.length > 0) {
+    reasons.push(
+      `调味品 ${seasoningReminders.length} 项（${seasoningReminders.slice(0, 4).join('、')}）` +
+        `请自行准备：不计库存、也不扣量。`,
+    )
   }
 
   const expiringNames = evaluation.requirements
@@ -817,8 +968,10 @@ export function recommendMealPlans(
     signature: string
     /** 完整排序键（等级 → 主缺口 → 覆盖 → 软评分 → 签名） */
     orderKey: PlanOrderKey
-    /** 同档分组键（等级 | 主缺口 | 覆盖分桶）：重叠惩罚只在同档内改变先后 */
+    /** 同档分组键（等级 | 主缺口 | 覆盖分桶）：软分只在同档内改变先后 */
     tierKey: string
+    /** v0.2.4：主菜锚点与挑选用的附加信息 */
+    selectable: SelectablePlan
   }
 
   const candidates: Candidate[] = []
@@ -844,10 +997,35 @@ export function recommendMealPlans(
     const levelRank = planLevelRank(level)
     const bucket = quantityCoverageBucket(evaluation.quantity_coverage)
 
+    /**
+     * v0.2.4：主菜锚点（同一集合与顺序无关）。
+     * 一餐最多一个主菜，其余全是配菜。
+     */
+    const anchor = mainDishAnchorOf(dishes)
+    if (anchor === null) continue // 空方案不可能出现，防御性跳过
+    const anchorDish = dishes.find((d) => d.recipe_id === anchor.recipe_id)
+    const mainDefinitionIds = new Set<number>(
+      anchorDish === undefined
+        ? []
+        : [...mainIngredientIdsOf(anchorDish, (id) => meta.get(id)?.is_seasoning === true)],
+    )
+    const sideComplement = sideComplementScore(dishes, anchor.recipe_id)
+    const tierKey = `${levelRank}|${evaluation.main_missing_count}|${bucket}`
+
     candidates.push({
       recipeIds,
       signature,
-      tierKey: `${levelRank}|${evaluation.main_missing_count}|${bucket}`,
+      tierKey,
+      selectable: {
+        plan_id: signature,
+        tier_key: tierKey,
+        score: breakdown.total,
+        main_dish_recipe_id: anchor.recipe_id,
+        main_dish_rank: anchor.rank,
+        recipe_ids: recipeIds,
+        main_definition_ids: [...mainDefinitionIds],
+        side_complement: sideComplement,
+      },
       orderKey: {
         level_rank: levelRank,
         main_missing_count: evaluation.main_missing_count,
@@ -857,6 +1035,7 @@ export function recommendMealPlans(
       },
       plan: {
         plan_id: signature,
+        main_dish_recipe_id: anchor.recipe_id,
         snapshot_id: snapshotId,
         level,
         score: breakdown.total,
@@ -871,13 +1050,22 @@ export function recommendMealPlans(
           repeated_meal: soft.repeated_meal,
         },
         shortages: buildShortages(evaluation),
+        /**
+         * v0.2.4：**主菜排第一**，其余按 recipe_id 升序；
+         * 每道菜显式带 `role_in_meal`，前端不再自己猜。
+         */
         dishes: [...dishes]
-          .sort((a, b) => a.recipe_id - b.recipe_id)
+          .sort((a, b) => {
+            if (a.recipe_id === anchor.recipe_id) return -1
+            if (b.recipe_id === anchor.recipe_id) return 1
+            return a.recipe_id - b.recipe_id
+          })
           .map((d) => {
             const loaded = recipesById.get(d.recipe_id)!
             return {
               recipe_id: d.recipe_id,
               recipe_name: d.recipe_name,
+              role_in_meal: d.recipe_id === anchor.recipe_id ? ('main' as const) : ('side' as const),
               servings: d.servings,
               tags: [...d.tags],
               content_revision: loaded.content_revision,
@@ -921,34 +1109,27 @@ export function recommendMealPlans(
 
   candidates.sort((a, b) => comparePlanOrder(a.orderKey, b.orderKey))
 
-  /* ---------- 选 top N：同档内用重叠惩罚 + 软评分（条目⑤） ---------- */
-  const pool = [...candidates]
-  const selected: Candidate[] = []
-
-  while (selected.length < MAX_PLANS && pool.length > 0) {
-    // ⚠️ 只在**同一档**（等级 + 主缺口 + 覆盖分桶完全相同）内比较：
-    //    保证「库存足够 / 缺口更少 / 覆盖更高」永远优先于软评分与重叠惩罚。
-    const tier = pool[0].tierKey
-    let bestIdx = 0
-    let bestAdjusted = Number.NEGATIVE_INFINITY
-
-    for (let i = 0; i < pool.length; i++) {
-      const cand = pool[i]
-      if (cand.tierKey !== tier) break
-      const overlap = maxOverlapWithSelected(cand.recipeIds, selected)
-      const adjusted = cand.plan.score - OVERLAP_PENALTY * overlap
-      if (adjusted > bestAdjusted) {
-        bestAdjusted = adjusted
-        bestIdx = i
-      }
-    }
-
-    selected.push(pool[bestIdx])
-    pool.splice(bestIdx, 1)
-  }
+  /**
+   * ---------- 选 top N（v0.2.4：主菜优先变化） ----------
+   *
+   * 纯函数 `selectDistinctMainPlans` 负责：
+   *   - 硬 tier 顺序不变（等级 → 主缺口 → 覆盖分桶），`ready` 不会被越过；
+   *   - 每个主菜最多一套、签名不重复；
+   *   - 同 tier 内先比「主菜食材变化 / 配菜互补」，再比既有总分。
+   * 因此「换副菜凑五套」与「同一主菜多套」都不会发生。
+   */
+  const selectedIndexes = selectDistinctMainPlans(
+    candidates.map((c) => c.selectable),
+    MAX_PLANS,
+  )
+  const selected: Candidate[] = selectedIndexes.map((i) => candidates[i])
 
   if (selected.length < MIN_PLANS && candidates.length > 0) {
-    notes.push(`符合条件的组合只有 ${selected.length} 套（少于 ${MIN_PLANS} 套）。`)
+    // 用户语言：不展示候选上限 / 哈希 / 相似度之类的实现细节
+    notes.push(
+      `这次只凑出 ${selected.length} 套「主菜各不相同」的整餐，就不为了凑数重复同样的主菜了。` +
+        `再多准备一两道不同的主菜，就能给出更多选择。`,
+    )
   }
 
   return {
@@ -967,20 +1148,6 @@ export function recommendMealPlans(
     plans: selected.map((s) => s.plan),
     notes,
   }
-}
-
-/** 与已选方案的最大菜品重合数 */
-function maxOverlapWithSelected(
-  recipeIds: readonly number[],
-  selected: ReadonlyArray<{ recipeIds: number[] }>,
-): number {
-  let max = 0
-  for (const s of selected) {
-    let shared = 0
-    for (const id of recipeIds) if (s.recipeIds.includes(id)) shared++
-    if (shared > max) max = shared
-  }
-  return max
 }
 
 /** 供测试与调试：读取当前临期规则快照 */

@@ -109,7 +109,13 @@ export type RequirementStatus =
   | 'insufficient'
   | 'unit_mismatch'
   | 'unknown_quantity'
+  /**
+   * ⚠️ v0.2.4 起**不再产生**（保留仅为兼容旧调用方/旧数据的类型判断）。
+   *    调味品的展示改用 `seasoning_reminder`。
+   */
   | 'seasoning_missing'
+  /** v0.2.4：调味品中性提醒（自行准备，不计库存、不扣量） */
+  | 'seasoning_reminder'
 
 /** 合并后的一条整餐需求（同食材 + 同单位已合并） */
 export interface EvaluatedRequirement {
@@ -139,9 +145,14 @@ export interface PlanEvaluation {
   satisfied_count: number
   /** 会造成「做不成」的缺口数（不含调味品） */
   main_missing_count: number
-  /** 缺失的调味品数 */
+  /**
+   * ⚠️ v0.2.4：**恒为 0**。
+   *    调味品不再参与缺口判定；保留字段只为响应结构兼容。
+   */
   seasoning_missing_count: number
-  /** 合计缺口 = main + seasoning */
+  /** v0.2.4：需要提醒自行准备的调味品数（不影响等级与评分） */
+  seasoning_reminder_count: number
+  /** 合计缺口（v0.2.4 = `main_missing_count`） */
   missing_count: number
   /** 用量未指定的合并需求数 */
   unknown_count: number
@@ -338,7 +349,7 @@ function allocateByFefo(
  *   2. 无 code 时，仅当分类为 `dish_type` 才按**名称**回退；
  *   3. 都没有 → 空数组（标签不完整，正常降级）。
  */
-function rolesOfDish(dish: DishSpec): DishRole[] {
+export function rolesOfDish(dish: DishSpec): DishRole[] {
   const roles = new Set<DishRole>()
   const refs = dish.tag_refs
   if (refs !== undefined && refs.length > 0) {
@@ -471,7 +482,10 @@ export function evaluateCombination(
   let requiredCount = 0
   let satisfiedCount = 0
   let mainMissing = 0
-  let seasoningMissing = 0
+  /** v0.2.4：恒为 0（调味品不再参与缺口判定） */
+  const seasoningMissing = 0
+  /** v0.2.4：需要提醒自行准备的调味品数 */
+  let seasoningReminder = 0
   let unknownCount = 0
   let expiringUsed = 0
   let expiredExcluded = 0
@@ -507,7 +521,10 @@ export function evaluateCombination(
     // ⚠️⚠️ 只要同 key 里**出现过**「未指定用量」的行，就必须计入 unknown：
     //     已知量再充足也不能把这条需求当成「够用」，更不能让方案被判为 ready。
     //     （边界用例：番茄 1 个 + 番茄「适量」混合 → 必须 unknown_count > 0）
-    if (req.has_unknown_line) unknownCount++
+    //
+    // ⚠️ v0.2.4：**调味品不参与 unknown 统计**（含 `0 + null` 混合）——
+    //     它既不进缺口、也不进覆盖率分母，更不能让方案降级。
+    if (!isSeasoning && req.has_unknown_line) unknownCount++
 
     const lots = stock.get(req.definition_id) ?? []
     let expiredQty = 0
@@ -525,62 +542,36 @@ export function evaluateCombination(
       availableQty = roundQuantity(availableQty + lot.quantity)
     }
 
-    // 调味品 presence-only：只看有没有**可用**库存记录
+    /**
+     * ⚠️⚠️ v0.2.4：调味品**完全不参与库存判定**。
+     *
+     * 决策：调味品只做中性备料提醒 —— 不计库存、不扣量、不阻挡开做与结算。
+     * 因此这里**不看库存**、不声称「家里有 / 没有」：
+     *   - 不计缺口（`seasoning_missing_count` 恒 0）
+     *   - 不计未知用量（含 `0 + null` 混合）
+     *   - 不进覆盖率分母 / 利用率 / 临期收益 / 共享食材奖励
+     *   - 库存变化也不会改变本条的结论（因此不会影响排序）
+     *
+     * 唯一的输出是一条中性提醒；**显式纯零**（无 null 行且已知量 ≤ 0）不提醒。
+     */
     if (isSeasoning) {
-      /**
-       * ⚠️⚠️ v0.2.3 修复（v0.2.2 审计发现）：
-       *    旧实现用 `lots.length > 0` 判断「家里有没有」，于是
-       *    **只剩过期批次**的调味品也会被判成「有」，
-       *    与「过期一律不计入可用」的规则自相矛盾。
-       *    现在改成：存在**任一未过期**批次才算有。
-       *
-       * ⚠️ 保留原有 presence 语义：`quantity = 0` 的未过期批次
-       *    **仍算「有」**（调味品只记有无，不看数量）。
-       */
-      const present = lots.some((l) => l.expiry_status !== 'expired')
-      /**
-       * ⚠️⚠️ v0.2.3（R3）：调味品**不再声称"会消耗临期"**。
-       *
-       * 理由：调味品是 presence-only，结算侧**不会产生任何按量扣减**
-       * （确实不按量扣），因此"用掉了临期调味品"是**无法被结算兑现的收益声明**。
-       * 与 R3 同一条原则：只给"结算真的会做"的收益。
-       */
-      const usedExpiring = false
-      if (present) {
-        // ⚠️ 刻意**不**递增 satisfiedCount：
-        //    调味品不计入 requiredCount（它没有可比的数量），
-        //    若这里也 +1，界面会出现「4/3 项够用」这种分子大于分母的读数。
-        if (usedExpiring) expiringUsed++
+      const explicitZero = !req.has_unknown_line && req.known_required <= 0
+      if (!explicitZero) {
+        seasoningReminder++
         requirements.push({
           definition_id: req.definition_id,
           definition_name: req.definition_name,
           unit: req.unit,
-          required_quantity: null,
-          available_quantity: availableQty,
-          missing_quantity: null,
-          status: 'ok',
-          is_seasoning: true,
-          used_expiring: usedExpiring,
-          expired_excluded_quantity: expiredQty,
-          note: `调味品「${req.definition_name}」：家里有（调味品只记有无，不计数量）`,
-        })
-      } else {
-        seasoningMissing++
-        requirements.push({
-          definition_id: req.definition_id,
-          definition_name: req.definition_name,
-          unit: req.unit,
-          required_quantity: null,
+          required_quantity: req.has_unknown_line ? null : req.known_required,
           available_quantity: 0,
           missing_quantity: null,
-          status: 'seasoning_missing',
+          status: 'seasoning_reminder',
           is_seasoning: true,
           used_expiring: false,
           expired_excluded_quantity: 0,
-          note: `调味品「${req.definition_name}」：库存里没有`,
+          note: `调味品「${req.definition_name}」请自行准备（不计库存、也不扣量）`,
         })
       }
-      // 注：unknown 已在循环开头统一计数，这里不再重复
       continue
     }
 
@@ -757,6 +748,7 @@ export function evaluateCombination(
     })
   }
 
+  // v0.2.4：缺口只由主食材构成，调味品不计
   const missingCount = mainMissing + seasoningMissing
   /**
    * 满足比例。
@@ -822,6 +814,7 @@ export function evaluateCombination(
     satisfied_count: satisfiedCount,
     main_missing_count: mainMissing,
     seasoning_missing_count: seasoningMissing,
+    seasoning_reminder_count: seasoningReminder,
     missing_count: missingCount,
     unknown_count: unknownCount,
     expiring_used_count: expiringUsed,
@@ -916,14 +909,12 @@ export function scoreBreakdown(
   /**
    * ⚠️ 只有**真正 ready** 才给全足奖励。
    *
-   * 旧写法只看 `main_missing_count === 0`，会让「有未知用量」或「缺调味品」
-   * 的方案也拿到满分奖励，从而**压过真正库存全足的方案**。
-   * 现在三个条件同时成立才算全足。
+   * v0.2.4：**调味品不参与**。它不计库存、不扣量，
+   * 因此「家里没记着有盐」不能让一套库存全足的方案丢掉满分奖励。
+   * 判定条件 = 主食材无缺口 + 无未知用量。
    */
   const isTrulyReady =
-    evaluation.main_missing_count === 0 &&
-    evaluation.seasoning_missing_count === 0 &&
-    evaluation.unknown_count === 0
+    evaluation.main_missing_count === 0 && evaluation.unknown_count === 0
 
   const readyBonus = isTrulyReady ? w.ready_bonus : 0
   const coveragePart = w.coverage * evaluation.coverage
@@ -934,7 +925,8 @@ export function scoreBreakdown(
   const sharedPart = w.shared_each * evaluation.shared_requirement_count
   const diversityPart = w.diversity * evaluation.diversity_score
   const missingPenalty = w.missing_each * evaluation.main_missing_count
-  const seasoningPenalty = w.seasoning_missing_each * evaluation.seasoning_missing_count
+  // v0.2.4：调味品不扣分（`seasoning_missing_count` 恒 0，这里显式写 0）
+  const seasoningPenalty = 0
   const unknownPenalty = w.unknown_each * evaluation.unknown_count
 
   const stockTotal = roundScore(
@@ -990,9 +982,12 @@ export function planSignature(dishes: readonly DishSpec[]): string {
 /** 方案等级：可做 / 缺料 */
 export function planLevel(evaluation: PlanEvaluation): 'ready' | 'nearly' | 'missing' {
   if (evaluation.main_missing_count === 0) {
-    return evaluation.seasoning_missing_count > 0 || evaluation.unknown_count > 0
-      ? 'nearly'
-      : 'ready'
+    /**
+     * ⚠️ v0.2.4：**调味品不参与降级**。
+     *    它不计库存、不扣量，不能让一套库存够的方案被判 `nearly`。
+     *    仍会影响等级的是「主食材缺口」与「非调味品的未知用量」。
+     */
+    return evaluation.unknown_count > 0 ? 'nearly' : 'ready'
   }
   return 'missing'
 }

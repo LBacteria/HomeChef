@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify'
 
 import {
+  MAX_BULK_STOCK_DELETE,
   consumeStock,
   createStock,
   deleteStock,
+  deleteStocks,
   getStockById,
   listStock,
   listStockWithQuantity,
@@ -327,6 +329,40 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
     deleteStock(id)
     return reply.code(204).send()
   })
+
+  /**
+   * POST /api/ingredients/bulk-delete
+   * 批量删除**库存记录**（不是 definition）。200 / 400 / 404
+   *
+   * body: `{ ids: number[] }`（1–2000 条；重复 id 自动去重）
+   *
+   * ⚠️ 任何一个 id 不存在 → **整批不删**（服务层同一事务内先全量校验）。
+   * ⚠️ 不影响 ingredient_definition / 别名 / 允许单位 / 菜谱 / 历史。
+   */
+  app.post<{ Body: { ids: number[] } }>(
+    '/api/ingredients/bulk-delete',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['ids'],
+          properties: {
+            ids: {
+              type: 'array',
+              minItems: 1,
+              maxItems: MAX_BULK_STOCK_DELETE,
+              items: { type: 'integer', minimum: 1 },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = deleteStocks(request.body.ids)
+      return reply.code(200).send(result)
+    },
+  )
 
   /**
    * POST /api/ingredients/:id/consume

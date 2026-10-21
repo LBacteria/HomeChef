@@ -615,12 +615,30 @@ export interface SessionDishInput {
  *    **同一个事务**：任一步失败整体回滚，不会产生半套会话。
  *
  * ⚠️ **不预扣任何库存**：库存扣减只发生在既有结算流程（settlementService）。
- * ⚠️ 菜谱在事务**之前**统一校验存在性；事务内只做插入。
+ * ⚠️ v0.2.4：存在性校验已移入**事务内**（`createSessionWithDishesTx`），
+ *    以便调用方（推荐 apply 的持久化幂等）把校验、建会话与写回执放进同一事务。
  * ⚠️ 同一菜谱**不允许**重复出现（推荐侧已保证；这里再兜一层）。
  *
  * @throws VALIDATION_ERROR / RECIPE_NOT_FOUND
  */
 export function createSessionWithDishes(
+  inputs: readonly SessionDishInput[],
+): CookingSessionDetail {
+  return db.transaction((tx) => createSessionWithDishesTx(tx, inputs))
+}
+
+/**
+ * `createSessionWithDishes` 的**事务内**版本（v0.2.4）。
+ *
+ * 为什么需要它：推荐 apply 的持久化幂等要求「写回执 + 建会话 + 建菜品」
+ * 落在**同一个事务**里，否则崩溃窗口仍会重复建会话。
+ *
+ * ⚠️ 参数校验与存在性校验**在这里同样执行**，不能被绕过：
+ *    直接拿到调用方事务的调用者不享受任何豁免。
+ * ⚠️ 校验用的 `tx.select` 与插入在同一个事务连接上，读到的是同一份快照。
+ */
+export function createSessionWithDishesTx(
+  tx: Tx,
   inputs: readonly SessionDishInput[],
 ): CookingSessionDetail {
   if (!Array.isArray(inputs) || inputs.length === 0) {
@@ -645,49 +663,45 @@ export function createSessionWithDishes(
     }
     seen.add(d.recipe_id)
 
-    const found = db.select({ id: recipe.id }).from(recipe).where(eq(recipe.id, d.recipe_id)).get()
+    const found = tx.select({ id: recipe.id }).from(recipe).where(eq(recipe.id, d.recipe_id)).get()
     if (!found) {
       throw recipeNotFoundError(`菜谱不存在：id=${d.recipe_id}`)
     }
   }
 
-  const sessionId = db.transaction((tx) => {
-    const timestamp = nowIso()
+  const timestamp = nowIso()
 
-    const created = tx
-      .insert(cookingSession)
+  const created = tx
+    .insert(cookingSession)
+    .values({
+      status: 'active',
+      recipe_revision: 0,
+      started_at: timestamp,
+      created_at: timestamp,
+      updated_at: timestamp,
+    })
+    .returning({ id: cookingSession.id })
+    .get()
+
+  let order = 0
+  for (const d of inputs) {
+    tx.insert(cookingSessionDish)
       .values({
-        status: 'active',
-        recipe_revision: 0,
-        started_at: timestamp,
+        session_id: created.id,
+        recipe_id: d.recipe_id,
+        servings: d.servings,
+        status: 'pending',
+        current_step_no: null,
+        confirmed_revision: 0,
+        sort_order: order,
         created_at: timestamp,
         updated_at: timestamp,
       })
-      .returning({ id: cookingSession.id })
-      .get()
+      .run()
+    order += 1
+  }
 
-    let order = 0
-    for (const d of inputs) {
-      tx.insert(cookingSessionDish)
-        .values({
-          session_id: created.id,
-          recipe_id: d.recipe_id,
-          servings: d.servings,
-          status: 'pending',
-          current_step_no: null,
-          confirmed_revision: 0,
-          sort_order: order,
-          created_at: timestamp,
-          updated_at: timestamp,
-        })
-        .run()
-      order += 1
-    }
-
-    return created.id
-  })
-
-  return buildDetail(sessionId)
+  return buildDetail(created.id)
 }
 
 /* ============================================================

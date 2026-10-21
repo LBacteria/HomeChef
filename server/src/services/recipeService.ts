@@ -104,6 +104,41 @@ function loadStepsOf(recipeId: number): RecipeStepDetail[] {
     .all()
 }
 
+/**
+ * v0.2.4：一次取回**全部**菜谱的 Tag 名称（按关联记录 id 排序）。
+ *
+ * ⚠️ 只为列表查询消除 N+1；单条详情仍用 `loadTagsOf`，语义完全一致。
+ */
+function loadAllTagsByRecipe(): Map<number, string[]> {
+  const rows = db
+    .select({ recipe_id: recipeTagLink.recipe_id, name: recipeTag.name })
+    .from(recipeTagLink)
+    .innerJoin(recipeTag, eq(recipeTag.id, recipeTagLink.tag_id))
+    .orderBy(asc(recipeTagLink.id))
+    .all()
+
+  const result = new Map<number, string[]>()
+  for (const row of rows) {
+    const list = result.get(row.recipe_id)
+    if (list) list.push(row.name)
+    else result.set(row.recipe_id, [row.name])
+  }
+  return result
+}
+
+/** v0.2.4：一次取回每个菜谱的配料条数（列表查询消除 N+1） */
+function loadAllIngredientCounts(): Map<number, number> {
+  const rows = db
+    .select({ recipe_id: recipeIngredient.recipe_id, count: sql<number>`count(*)` })
+    .from(recipeIngredient)
+    .groupBy(recipeIngredient.recipe_id)
+    .all()
+
+  const result = new Map<number, number>()
+  for (const row of rows) result.set(row.recipe_id, Number(row.count))
+  return result
+}
+
 /** 取某个菜谱的 Tag 名称列表（按关联记录 id 排序，保证稳定） */
 function loadTagsOf(recipeId: number): string[] {
   return db
@@ -180,16 +215,13 @@ export function listRecipes(query: RecipeListQuery = {}): RecipeSummary[] {
   // ⚠️ 次级排序固定 id 升序 → 同值记录顺序确定
   let rows = db.select().from(recipe).orderBy(primary, asc(recipe.id)).all()
 
-  /* ---------- 2. Tag 筛选 ---------- */
-  if (tagNames.length > 0) {
-    // 预先取每个菜谱的 Tag 集合，避免 N 次重复查询关联表
-    const tagSets = new Map<number, Set<string>>()
-    for (const r of rows) {
-      tagSets.set(r.id, new Set(loadTagsOf(r.id)))
-    }
+  /* ---------- 2. 批量取 Tag / 配料数（v0.2.4：两条聚合查询，消除 N+1） ---------- */
+  const tagsByRecipe = loadAllTagsByRecipe()
+  const ingredientCountByRecipe = loadAllIngredientCounts()
 
+  if (tagNames.length > 0) {
     rows = rows.filter((r) => {
-      const owned = tagSets.get(r.id) ?? new Set<string>()
+      const owned = new Set(tagsByRecipe.get(r.id) ?? [])
       return tagMode === 'and'
         ? tagNames.every((t) => owned.has(t))   // AND：拥有全部
         : tagNames.some((t) => owned.has(t))    // OR：拥有任意一个
@@ -206,24 +238,16 @@ export function listRecipes(query: RecipeListQuery = {}): RecipeSummary[] {
     rows = rows.filter((r) => r.name.toLowerCase().includes(needle))
   }
 
-  /* ---------- 4. 组装返回 ---------- */
-  return rows.map((r) => {
-    const ingredientCount = db
-      .select({ id: recipeIngredient.id })
-      .from(recipeIngredient)
-      .where(eq(recipeIngredient.recipe_id, r.id))
-      .all().length
-
-    return {
-      id: r.id,
-      name: r.name,
-      note: r.note,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-      tags: loadTagsOf(r.id),
-      ingredient_count: ingredientCount,
-    }
-  })
+  /* ---------- 4. 组装返回（全部来自内存映射，语义与逐条查询一致） ---------- */
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    note: r.note,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    tags: tagsByRecipe.get(r.id) ?? [],
+    ingredient_count: ingredientCountByRecipe.get(r.id) ?? 0,
+  }))
 }
 
 /**
