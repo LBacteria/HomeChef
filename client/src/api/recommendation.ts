@@ -45,7 +45,7 @@ export function getMealPlans(
  *     重试是安全的**：服务端同 key 同 payload 会返回首次创建的那个会话，
  *     不会重复建会话。
  *   - 同 key **不同 payload** 会被服务端以 409 拒绝（客户端复用 key 的错误）。
- *   - ⚠️ 幂等表在服务端**进程内**，重启即失效（见 HANDOFF_V022 局限说明）。
+ *   - v0.2.4：幂等回执持久化到数据库，重启后仍有效；用户删除会话后，对应去重保证结束。
  */
 export function applyMealPlan(
   people: number,

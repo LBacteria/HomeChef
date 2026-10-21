@@ -63,11 +63,8 @@ Thumbs.db
 # 受保护的一次性诊断脚本（保持**未跟踪**：不得修改、移动、暂存或提交）
 #
 # ⚠️⚠️ 这里**逐条列出精确路径，刻意不使用 `server/_*.ts` 这类通配符**：
-#      server/ 下另有 10 个**已正常跟踪**的 `_*.ts` 项目文件
-#      （如 _diag-cross.ts、_tz-probe.ts、_review-cats.ts、_check-v013.ts、
-#        seed/_check-cats.ts、seed/_remap-categories.ts 等），
-#      通配符会把它们一并"标成垃圾"，一旦将来被 git rm 后重新加入
-#      就会被静默忽略。
+#      `server/_tz-probe.ts` 是 verify-dates.ts 的测试依赖，必须继续跟踪。
+#      历史一次性工具在下方逐个列出，避免误伤正式测试。
 #
 # ⚠️ 其中 `_rebuild-cleanup.ts` 会 `delete from` 清空真实库的库存与食材定义，
 #     误提交或误运行后果严重。
@@ -86,3 +83,31 @@ server/seed/_audit-shelf.ts
 server/seed/_audit-units.ts
 server/seed/_list-aliases.ts
 server/seed/_verify-alias-update.ts
+
+# 本机会话交接与验收记录（保留本地，不随源码分发）
+/HANDOFF*.md
+/SOL_ACCEPTANCE*.md
+/DEV_NOTES*.md
+
+# 已完成任务的一次性诊断 / 源码修补工具
+/server/_check-doc-coverage.ts
+/server/_check-docs.ts
+/server/_check-encoding.ts
+/server/_check-v013.ts
+/server/_diag-cross.ts
+/server/_repro-u1.ts
+/server/_review-cats.ts
+/server/diag-p29.ts
+/server/seed/_check-cats.ts
+/server/seed/_remap-categories.ts
+
+# 任意目录中的本地 SQLite 文件及旁文件
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
