@@ -1,0 +1,75 @@
+{
+  "name": "homechef-desktop",
+  "version": "0.2.5",
+  "private": true,
+  "description": "HomeChef 桌面客户端（Windows）",
+  "main": "dist/main.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build:main": "tsc",
+    "prepare:resources": "node scripts/prepare-resources.mjs",
+    "build": "npm run build:main && npm run prepare:resources",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@fastify/static": "10.1.7",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.3",
+    "fastify": "5.2.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "4.2.1",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "22.10.2",
+    "electron": "38.8.6",
+    "electron-builder": "26.15.3",
+    "typescript": "5.7.3"
+  },
+  "build": {
+    "appId": "com.homechef.desktop",
+    "productName": "HomeChef",
+    "npmRebuild": false,
+    "copyright": "HomeChef",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "server-dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../client/dist",
+        "to": "web"
+      },
+      {
+        "from": "../server/drizzle",
+        "to": "drizzle"
+      }
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "HomeChef-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "HomeChef"
+    }
+  }
+}

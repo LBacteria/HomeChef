@@ -1,12 +1,13 @@
 {
   "name": "homechef",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "HomeChef —— 本地家庭食材库存与菜谱管理",
   "license": "MIT",
   "workspaces": [
     "client",
-    "server"
+    "server",
+    "desktop"
   ],
   "scripts": {
     "dev:client": "npm run dev --workspace client",

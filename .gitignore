@@ -111,3 +111,8 @@ server/seed/_verify-alias-update.ts
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+
+# Local agent data and device acceptance records
+.dsh-meow/
+/mobile/ACCEPTANCE.md
+/mobile/CONTENT_IMPORT_ACCEPTANCE.md

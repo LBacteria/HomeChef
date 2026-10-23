@@ -1,3 +1,4 @@
+import StarterContentPanel from '../components/StarterContentPanel'
 import { useEffect, useState } from 'react'
 
 import { getSettings, updateSettings } from '../api/settings'
@@ -123,6 +124,7 @@ export default function SettingsPage() {
   return (
     <section>
       <h2>设置</h2>
+      <StarterContentPanel />
 
       <div className="settings-group">
         <h3 className="settings-group-title">库存</h3>

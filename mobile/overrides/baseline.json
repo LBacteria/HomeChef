@@ -1,0 +1,7 @@
+{
+  "client/src/App.tsx": "22b124802d96bf80d45be5a381a860fa65704691175deef6b2759a360467fa82",
+  "client/src/api/definitions.ts": "4ef5fb56dde4c153895ae5ecdac98fbb4bfdda1b6c159babb1d4f7005c777f6e",
+  "client/src/pages/SettingsPage.tsx": "37c68c3b57d824744fa46cbc3b22cbbf4b177d770e5b29881e91d92d8ec3eca4",
+  "server/src/db/index.ts": "b579ff9567bc874f81906456eeb4aa72927f414b43f5714a23e74ba1f177192b",
+  "server/src/services/faultInjection.ts": "3c9ed21b17fd0f7a00217f894d8bff87cfc6847dae5a6a785a643a9db351c8d2"
+}
