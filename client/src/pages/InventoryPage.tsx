@@ -142,6 +142,10 @@ interface Props {
 }
 
 export default function InventoryPage({ definitionsVersion = 0, settingsVersion = 0 }: Props) {
+  const [density, setDensity] = useState<'compact' | 'tiles' | 'detail'>(() => {
+    try { const v = localStorage.getItem('homechef.inventory-density'); return v === 'tiles' || v === 'detail' ? v : 'compact' } catch { return 'compact' }
+  })
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [records, setRecords] = useState<InventoryRecord[]>([])
   const [definitions, setDefinitions] = useState<IngredientDefinitionDetail[]>([])
   const [loading, setLoading] = useState(true)
@@ -382,6 +386,8 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
     const payload: Record<string, unknown> = {
       definition_id: value.definition_id,
       note: value.note,
+      secondary_unit: value.secondary_unit,
+      secondary_ratio: value.secondary_ratio,
     }
     if (value.quantity !== null) payload.quantity = value.quantity
     if (value.unit !== null) payload.unit = value.unit
@@ -415,13 +421,15 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
       ...(value.expiry_date !== undefined ? { expiry_date: value.expiry_date } : {}),
       storage_method: value.storage_method ?? undefined,
       note: value.note,
+      secondary_unit: value.secondary_unit,
+      secondary_ratio: value.secondary_ratio,
     })
     closeDialog()
     await load()
   }
 
-  async function handleConsume(id: number, amount: number) {
-    await consumeInventory(id, { amount })
+  async function handleConsume(id: number, amount: number, unit: string) {
+    await consumeInventory(id, { amount, unit })
     closeDialog()
     await load()
   }
@@ -450,7 +458,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
   }, [])
 
   return (
-    <section>
+    <section className={`inventory-view inventory-${density}`}>
       <div className="section-header">
         <h2>当前库存</h2>
         <div className="section-header-actions">
@@ -480,6 +488,11 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
         </div>
       </div>
 
+      <label className="inventory-density">显示大小
+        <select value={density} onChange={e => { const value = e.target.value as typeof density; setDensity(value); try { localStorage.setItem('homechef.inventory-density', value) } catch {} }}>
+          <option value="compact">紧凑列表</option><option value="tiles">小方块</option><option value="detail">详细列表</option>
+        </select>
+      </label>
       {/* v0.2.4：批量选择条 —— 全选范围只限**当前可见**记录 */}
       {selectionMode && (
         <div className="bulk-bar">
@@ -622,7 +635,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
                     return (
                       <li
                         key={record.id}
-                        className={`record-item${selectionMode && selectedIds.has(record.id) ? ' record-item-selected' : ''}`}
+                        className={`record-item${expanded.has(record.id) ? ' record-expanded' : ''}${selectionMode && selectedIds.has(record.id) ? ' record-item-selected' : ''}`}
                       >
                         {selectionMode && (
                           <input
@@ -642,6 +655,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
                           ) : (
                             <p className="record-quantity">
                               {formatQuantityWithUnit(record.quantity, record.unit)}
+                              {record.secondary_unit && record.secondary_ratio && <span className="hint-inline"> ≈ {formatQuantityWithUnit(record.quantity * record.secondary_ratio, record.secondary_unit)}</span>}
                               {badge && (
                                 <span className={`expiry-badge ${badge.className}`}>
                                   {badge.text}
@@ -650,6 +664,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
                             </p>
                           )}
 
+                          <button type="button" className="record-details-toggle" aria-expanded={expanded.has(record.id)} onClick={() => setExpanded(prev => { const next = new Set(prev); if (next.has(record.id)) next.delete(record.id); else next.add(record.id); return next })}>{expanded.has(record.id) ? '收起' : '详情 / 操作'}</button>
                           {/* 调味品不展示任何日期与储存方式 */}
                           {!seasoning && (
                             <>
@@ -690,12 +705,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
                           >
                             编辑
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setDialog({ kind: 'consume', record })}
-                          >
-                            编辑
-                          </button>
+
                           {/* 调味品没有数量，不提供「消耗」 */}
                           {!seasoning && (
                             <button
@@ -755,7 +765,7 @@ export default function InventoryPage({ definitionsVersion = 0, settingsVersion 
             definitionMap.get(dialog.record.definition_id)?.name ??
             `食材 #${dialog.record.definition_id}`
           }
-          onSubmit={(amount) => handleConsume(dialog.record.id, amount)}
+          onSubmit={(amount, unit) => handleConsume(dialog.record.id, amount, unit)}
           onCancel={closeDialog}
         />
       )}

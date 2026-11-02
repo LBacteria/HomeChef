@@ -1,3 +1,4 @@
+import { unitFactor, remainingLot } from './unitRelation.js'
 /**
  * v0.2.2 整餐推荐 —— **纯算法**（无数据库、无 IO、无随机）。
  *
@@ -63,6 +64,8 @@ export interface CandidateRecipeInput {
 
 /** 库存快照的一条记录 */
 export interface StockLotInput {
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   definition_id: number
   unit: string
   quantity: number
@@ -323,7 +326,7 @@ function allocateByFefo(
   const usable = lots
     .filter(
       (l) =>
-        l.unit === unit &&
+        unitFactor(l, unit) > 0 &&
         l.quantity > 0 &&
         (includeExpired || l.expiry_status !== 'expired'),
     )
@@ -334,7 +337,7 @@ function allocateByFefo(
   let remaining = required
   for (const lot of usable) {
     if (remaining <= 1e-9) break
-    const take = Math.min(remaining, lot.quantity)
+    const take = Math.min(remaining, lot.quantity * unitFactor(lot, unit))
     allocation.push({ lot, take })
     remaining = roundQuantity(remaining - take)
   }
@@ -513,6 +516,8 @@ export function evaluateCombination(
     return ua < ub ? -1 : ua > ub ? 1 : 0
   })
 
+  const remainingStock = new Map<number, StockLotInput[]>()
+  for (const [id, lots] of stock) remainingStock.set(id, lots.map(l => ({ ...l })))
   for (const req of ordered) {
     const info = meta.get(req.definition_id)
     const isSeasoning = info?.is_seasoning === true
@@ -526,22 +531,28 @@ export function evaluateCombination(
     //     它既不进缺口、也不进覆盖率分母，更不能让方案降级。
     if (!isSeasoning && req.has_unknown_line) unknownCount++
 
-    const lots = stock.get(req.definition_id) ?? []
+    const remainingLots = remainingStock.get(req.definition_id) ?? []
+    const lots = remainingLots.map(l => ({ ...l }))
     let expiredQty = 0
     let availableQty = 0
     let matchedUnit = false
 
     for (const lot of lots) {
       // ⚠️ 单位必须**完全相同**，绝不换算
-      if (req.unit === null || lot.unit !== req.unit) continue
+      if (req.unit === null || unitFactor(lot, req.unit) === 0) continue
       matchedUnit = true
       if (lot.expiry_status === 'expired') {
-        expiredQty = roundQuantity(expiredQty + lot.quantity)
+        expiredQty = roundQuantity(expiredQty + lot.quantity * unitFactor(lot, req.unit))
         continue
       }
-      availableQty = roundQuantity(availableQty + lot.quantity)
+      availableQty = roundQuantity(availableQty + lot.quantity * unitFactor(lot, req.unit))
     }
 
+    if (!isSeasoning && req.unit !== null) {
+      for (const { lot, take } of allocateByFefo(remainingLots, req.unit, req.known_required, options.includeExpiredInFefo === true)) {
+        lot.quantity = remainingLot(lot, take, req.unit)
+      }
+    }
     /**
      * ⚠️⚠️ v0.2.4：调味品**完全不参与库存判定**。
      *

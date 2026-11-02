@@ -610,3 +610,32 @@
     font-size: 0.8rem;
   }
 }
+
+.chef-assistant { margin: 0 0 24px; padding: 20px; border: 1px solid #d9cdbb; border-radius: 16px; background: #fffaf0; color: #3c352c; }
+.chef-assistant h2 { margin: 0 0 8px; font-size: 1.25rem; }
+.chef-assistant p { margin: 8px 0; line-height: 1.6; }
+.chef-assistant-conditions { font-weight: 600; }
+.chef-assistant-message { padding: 12px; border-radius: 10px; background: #f1e8d5; overflow-wrap: anywhere; }
+.chef-assistant-input-row { display: flex; gap: 8px; margin: 6px 0 12px; }
+.chef-assistant-input-row input { flex: 1; min-width: 0; padding: 10px; border: 1px solid #b6a58b; border-radius: 8px; font-size: 16px; }
+.chef-assistant-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chef-assistant button { min-height: 42px; padding: 8px 12px; border-radius: 9px; }
+.chef-assistant small { display: block; line-height: 1.5; }
+@media (max-width: 480px) { .chef-assistant { padding: 14px; } }
+
+.chef-chat-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chef-chat-heading h2 { margin: 0; }
+.chef-chat-log { height: 260px; max-height: 40vh; min-height: 160px; overflow-y: auto; overscroll-behavior: contain; padding: 8px 4px; margin: 12px 0; }
+.chef-chat-line { display: flex; flex-direction: column; align-items: flex-start; margin: 8px 0 12px; }
+.chef-chat-line.chef-chat-user { align-items: flex-end; }
+.chef-chat-speaker { padding: 0 4px; font-size: 0.78rem; color: #706657; }
+.chef-chat-line p { max-width: 90%; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 0; padding: 10px 13px; border-radius: 12px; background: #f1e8d5; }
+.chef-chat-user p { background: #dfeade; color: #27492f; }
+.chef-chat-footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.chef-chat-footer small { flex: 1; color: #706657; }
+@media (max-width: 480px) { .chef-chat-heading { align-items: flex-start; } .chef-chat-footer { align-items: stretch; flex-direction: column; } .chef-chat-line p { max-width: 94%; } }
+
+.rec-soup-change { margin: 0 0 16px; padding: 12px 16px; border: 1px solid #b6c9aa; border-radius: 10px; background: #f3f8ee; }
+.rec-soup-change p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.rec-dish-changed { outline: 2px solid #a2ba8d; background: #f3f8ee; }
+.rec-change-tag { padding: 2px 8px; border-radius: 8px; color: #31542c; background: #e1edda; font-size: .8rem; }

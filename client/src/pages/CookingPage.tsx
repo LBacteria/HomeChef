@@ -117,6 +117,8 @@ function displaySessionName(s: {
 }
 
 interface CookingPageProps {
+  /** 默认新一餐先选人数、选菜、核对；此时不创建数据库会话。 */
+  onStartMeal?: () => void
   /**
    * v0.2.2 整餐推荐：确认后**直达**该会话。
    *
@@ -125,7 +127,7 @@ interface CookingPageProps {
   initialSessionId?: number | null
 }
 
-export default function CookingPage({ initialSessionId = null }: CookingPageProps = {}) {
+export default function CookingPage({ initialSessionId = null, onStartMeal }: CookingPageProps = {}) {
   /* ---------- 列表 ---------- */
   const [sessions, setSessions] = useState<CookingSessionSummary[]>([])
   const [listLoading, setListLoading] = useState(true)
@@ -806,10 +808,11 @@ export default function CookingPage({ initialSessionId = null }: CookingPageProp
             type="button"
             className="primary"
             disabled={creating}
-            onClick={() => void handleCreateSession()}
+            onClick={() => { if (onStartMeal) onStartMeal(); else void handleCreateSession() }}
           >
             {creating ? '创建中…' : '+ 新建烹饪会话'}
           </button>
+          {onStartMeal && <button type="button" disabled={creating} onClick={() => void handleCreateSession()}>手动选菜</button>}
         </div>
 
         {listLoading && <p className="status">加载中…</p>}

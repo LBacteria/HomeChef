@@ -103,6 +103,8 @@ export interface RecommendationDish {
   recipe_name: string
   /** v0.2.4：本餐中的角色（后端唯一权威，前端不猜） */
   role_in_meal: 'main' | 'side'
+  /** Stable soup identity, independent of renamed display tags. */
+  is_soup: boolean
   /** 份数倍数（= 人数 ÷ 基准人数） */
   servings: number
   tags: string[]
@@ -203,7 +205,20 @@ export interface RecommendationPlan {
 }
 
 /** 推荐的筛选条件（v0.2.3：标签也参与推荐筛选） */
+export interface AssistantMealFilter {
+  ingredients?: string[]
+  cuisine?: string
+  exact_keep?: boolean
+  replacement_role?: 'soup'
+  light?: boolean
+  no_spicy?: boolean
+  simple?: number
+  keep_recipe_ids?: number[]
+  exclude_recipe_ids?: number[]
+}
+
 export interface MealPlanFilter {
+  assistant?: AssistantMealFilter
   /** 选中的 Tag 名称；空数组 = 不筛选 */
   tags?: string[]
   /** Tag 筛选模式：'and'（默认）| 'or' */
@@ -330,6 +345,8 @@ function buildStockIndex(today: string, rule: ExpiryRuleSnapshot): { index: Stoc
     const lot: StockLotInput = {
       definition_id: row.definition_id,
       unit: row.unit,
+      secondary_unit: row.secondary_unit,
+      secondary_ratio: row.secondary_ratio,
       quantity: row.quantity,
       expiry_status: evaluation.status,
       // v0.2.3（R3）：FEFO 需要与结算一致的 (到期日, 批次 id) 排序输入
@@ -391,10 +408,25 @@ function loadAllCandidates(filter: MealPlanFilter): { all: LoadedRecipe[]; withI
   const tagRefs = listTagRefsByRecipeIds(ids)
   const loaded = loadRecipesBulk(ids, tagRefs)
 
-  return {
-    all: ids.map((id) => loaded.get(id)!).filter((r) => r !== undefined),
-    withIngredients: summaries.length,
-  }
+  const options = filter.assistant
+  const hasTag = (r: LoadedRecipe, code: string, name: string) =>
+    r.tag_refs?.some(t => t.code === code || (t.code === null && t.name === name)) === true
+  const all = ids.map(id => loaded.get(id)!).filter(r => r !== undefined).filter(r => {
+    if (options?.cuisine && !r.tag_refs?.some(t => t.category === 'cuisine' && t.name === options.cuisine)) return false
+    if (options?.exclude_recipe_ids?.includes(r.recipe_id)) return false
+    if (options?.exact_keep && !options.keep_recipe_ids?.includes(r.recipe_id)) return false
+    if (options?.replacement_role === 'soup' && !options.keep_recipe_ids?.includes(r.recipe_id) && !hasTag(r, 'dish_type.soup', '汤')) return false
+    if (options?.light && !hasTag(r, 'flavor.light', '清淡')) return false
+    if (options?.simple && !hasTag(r, 'feature.quick', '快手菜')) return false
+    if (options?.no_spicy) {
+      // Positive evidence plus conservative exclusions; absence of a spicy tag alone is insufficient.
+      if (!hasTag(r, 'flavor.light', '清淡')) return false
+      if (r.tag_refs?.some(t => /spicy/.test(t.code ?? '') || /辣/.test(t.name))) return false
+      if (/辣|花椒|胡椒|芥末|咖喱/.test([r.recipe_name, ...r.lines.map(l => l.definition_name + (l.note ?? '')), ...r.steps.map(t => t.content)].join(' '))) return false
+    }
+    return true
+  })
+  return { all, withIngredients: all.length }
 }
 
 /** inArray 参数安全分块（SQLite 变量数上限远高于此，留足余量） */
@@ -625,7 +657,7 @@ function canonicalSnapshotPayload(
          * 把某个食材从「调味品」改成普通分类（或反过来）会改变语义，**必须**失效。
          */
         lots: (ctx.meta.get(id)?.is_seasoning === true ? [] : (ctx.stock.get(id) ?? []))
-          .map((l) => [l.unit, l.quantity, l.expiry_status])
+          .map((l) => [l.unit, l.quantity, l.expiry_status, l.secondary_unit ?? null, l.secondary_ratio ?? null])
           .sort((a, b) => {
             const ua = String(a[0])
             const ub = String(b[0])
@@ -872,9 +904,29 @@ export function recommendMealPlans(
   const tags = (filter.tags ?? []).map((t) => t.trim()).filter((t) => t.length > 0)
   const tagMode: 'and' | 'or' = filter.tagMode === 'or' ? 'or' : 'and'
 
-  const { all, withIngredients } = loadAllCandidates({ tags, tagMode })
+  const { all, withIngredients } = loadAllCandidates({ tags, tagMode, assistant: filter.assistant })
 
-  const desired = desiredDishCount(people)
+  const options = filter.assistant
+  const keep = options?.keep_recipe_ids ?? []
+  const exclude = options?.exclude_recipe_ids ?? []
+  const requiredIngredients = options?.ingredients ?? []
+  if (!Array.isArray(requiredIngredients) || requiredIngredients.length > 4 || requiredIngredients.some(n => typeof n !== 'string' || !n.trim() || n.length > 60) || new Set(requiredIngredients).size !== requiredIngredients.length) throw validationError('指定食材无效。')
+  if (options?.cuisine !== undefined && (typeof options.cuisine !== 'string' || !options.cuisine.trim() || options.cuisine.length > 60)) throw validationError('菜系要求无效。')
+  if (requiredIngredients.length) notes.push('整餐至少包含这些食材：' + requiredIngredients.join('、') + '；是否缺料另行按库存计算。')
+  if (options?.cuisine) notes.push('只选择菜系风格标记为“' + options.cuisine + '”的菜谱；无匹配时不自动放宽。')
+  if (options?.simple !== undefined && (!Number.isInteger(options.simple) || options.simple < 0 || options.simple > 2)) throw validationError('简化程度无效。')
+  for (const list of [keep, exclude]) {
+    if (list.length > 100 || list.some(id => !Number.isInteger(id) || id < 1) || new Set(list).size !== list.length) throw validationError('菜品选择无效，请重新推荐。')
+  }
+  if (keep.some(id => exclude.includes(id))) throw validationError('保留与替换的菜品不能相同。')
+  if (keep.some(id => !all.some(r => r.recipe_id === id))) throw validationError('保留的菜品已改变或不符合条件，请重新推荐。')
+  if (options?.exact_keep && (keep.length < 1 || keep.length > 4 || options.replacement_role || exclude.length)) throw validationError('恢复菜品清单无效，请重新推荐。')
+  const desired = options?.exact_keep ? keep.length : options?.replacement_role === "soup" ? keep.length + 1
+    : options?.simple === 2 ? Math.min(2, desiredDishCount(people)) : desiredDishCount(people)
+  if (!options?.exact_keep && keep.length >= desired) throw validationError('需要留出一道菜的位置才能替换。')
+  if (options?.light) notes.push('只选择标注为清淡的菜谱。')
+  if (options?.no_spicy) notes.push('按清淡标签，并排除菜名、配料和步骤中常见辣味词筛选；未标注或描述不全的菜谱无法保证不辣，请核对配料。')
+  if (options?.simple) notes.push(options.simple === 2 ? '简化为最多两道快手菜；不估算整餐耗时。' : '只选择标注为快手菜的菜谱；不估算整餐耗时。')
 
   /** 单菜软评分：偏好 + 历史（**必须在候选截断前**生效） */
   const recipeSoftScore = (recipeId: number): number =>
@@ -882,7 +934,10 @@ export function recommendMealPlans(
 
   // 条目⑤：**先按单菜库存匹配 + 单菜软评分排序，再截断**
   const ordered = orderCandidatesByStock(all, stock, meta, multiplier, recipeSoftScore, evalOptions)
-  const considered = ordered.slice(0, MAX_CANDIDATE_RECIPES)
+  const ingredientAnchors = requiredIngredients.flatMap(name => { const r = ordered.find(r => r.lines.some(l => l.definition_name === name)); return r ? [r.recipe_id] : [] })
+  const pinnedIds = [...new Set([...keep, ...ingredientAnchors])]
+  const pinned = pinnedIds.map(id => ordered.find(r => r.recipe_id === id)!)
+  const considered = [...pinned, ...ordered.filter(r => !pinnedIds.includes(r.recipe_id)).slice(0, MAX_CANDIDATE_RECIPES - pinned.length)]
   const candidateTruncated = ordered.length > considered.length
 
   const dishCount = Math.min(desired, considered.length)
@@ -930,7 +985,7 @@ export function recommendMealPlans(
   }
   const tagFilterSummary = { tags, tag_mode: tagMode, matched_recipe_count: withIngredients }
 
-  if (dishCount <= 0) {
+  if (dishCount <= 0 || (keep.length > 0 && dishCount < desired)) {
     return {
       people,
       base_servings: DEFAULT_RECIPE_BASE_SERVINGS,
@@ -958,8 +1013,9 @@ export function recommendMealPlans(
   for (const r of considered) recipesById.set(r.recipe_id, r)
   const ctx: SnapshotContext = { today, rule, stock, meta, recipes: recipesById }
 
-  const indices = considered.map((_, i) => i)
-  const combos = enumerateCombinations(indices, dishCount, MAX_COMBINATIONS)
+  const indices = considered.map((_, i) => i).filter(i => i >= keep.length)
+  const combos = (options?.exact_keep ? [[]] : enumerateCombinations(indices, dishCount - keep.length, MAX_COMBINATIONS))
+    .map(combo => [...keep.map((_, i) => i), ...combo])
   const truncated = combos.length >= MAX_COMBINATIONS
 
   interface Candidate {
@@ -977,6 +1033,7 @@ export function recommendMealPlans(
   const candidates: Candidate[] = []
 
   for (const combo of combos) {
+    if (!requiredIngredients.every(name => combo.some(idx => considered[idx].lines.some(l => l.definition_name === name)))) continue
     const dishes: DishSpec[] = combo.map((idx) => toDishSpec(considered[idx], multiplier))
     const evaluation = evaluateCombination(dishes, stock, meta, evalOptions)
     const level = planLevel(evaluation)
@@ -1065,6 +1122,7 @@ export function recommendMealPlans(
             return {
               recipe_id: d.recipe_id,
               recipe_name: d.recipe_name,
+              is_soup: loaded.tag_refs?.some(t => t.code === 'dish_type.soup' || (t.code === null && t.name === '汤')) === true,
               role_in_meal: d.recipe_id === anchor.recipe_id ? ('main' as const) : ('side' as const),
               servings: d.servings,
               tags: [...d.tags],

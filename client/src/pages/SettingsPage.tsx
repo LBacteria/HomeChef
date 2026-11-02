@@ -1,3 +1,4 @@
+import InventoryTransferPanel from '../components/InventoryTransferPanel'
 import StarterContentPanel from '../components/StarterContentPanel'
 import { useEffect, useState } from 'react'
 
@@ -125,6 +126,7 @@ export default function SettingsPage() {
     <section>
       <h2>设置</h2>
       <StarterContentPanel />
+      <InventoryTransferPanel />
 
       <div className="settings-group">
         <h3 className="settings-group-title">库存</h3>

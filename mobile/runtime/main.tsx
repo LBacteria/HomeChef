@@ -1,3 +1,9 @@
+import { registerPlugin } from '@capacitor/core';
+const documentFiles = registerPlugin<{exportDocument(options:{name:string;data:string}):Promise<{cancelled:boolean}>}>('HomeChefFiles');
+window.homechefSaveFile = async (name, _mime, bytes) => {
+  let text=''; for(const b of bytes)text+=String.fromCharCode(b);
+  const result=await documentFiles.exportDocument({name,data:btoa(text)});return !result.cancelled;
+};
 import { migrate } from './migrate';
 import '@homechef/client/src/styles.css';
 import '@homechef/client/src/home.css';

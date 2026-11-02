@@ -1,3 +1,4 @@
+import { lotQuantity, unitFactor } from './unitRelation.js'
 import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
@@ -20,7 +21,6 @@ import { addDays, isValidDateString, todayDateString } from './dates.js'
 import {
   QUANTITY_EPSILON,
   isValidQuantity,
-  prepareQuantityForWrite,
   roundQuantity,
 } from './quantity.js'
 
@@ -40,6 +40,7 @@ import {
  * ============================================================ */
 
 export interface CreateStockInput {
+  shelf_life_days?: number
   definition_id: number
   /**
    * 数量。
@@ -49,6 +50,8 @@ export interface CreateStockInput {
    */
   quantity?: number
   /** 单位。调味品不需要；普通食材必须提供且必须属于允许单位 */
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   unit?: string
   /** 入库日期；不提供则默认今天 */
   purchase_date?: string | null
@@ -71,6 +74,8 @@ export interface UpdateStockInput {
    */
   definition_id?: number
   quantity?: number
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   unit?: string
   purchase_date?: string | null
   production_date?: string | null
@@ -233,6 +238,8 @@ export interface BatchKey {
   purchase_date: string
   storage_method: string
   unit: string
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   /** ⚠️ 最终实际保存的 expiry_date；可为 NULL */
   expiry_date: string | null
 }
@@ -278,6 +285,8 @@ function findBatchMatch(
     eq(standardIngredient.purchase_date, key.purchase_date),
     eq(standardIngredient.storage_method, key.storage_method),
     eq(standardIngredient.unit, key.unit),
+    sql`${standardIngredient.secondary_unit} IS ${key.secondary_unit ?? null}`,
+    sql`${standardIngredient.secondary_ratio} IS ${key.secondary_ratio ?? null}`,
     // ⚠️ 必须用 IS，不能用 =（NULL-safe）
     sql`${standardIngredient.expiry_date} IS ${key.expiry_date}`,
   ]
@@ -330,6 +339,12 @@ export const SEASONING_SENTINEL_STORAGE: StorageMethod = '常温'
  * @throws ServiceError DEFINITION_NOT_FOUND / VALIDATION_ERROR /
  *                      UNIT_NOT_ALLOWED / INVALID_DATE_RANGE
  */
+function validateRelation(unit: string, secondary: string | null | undefined, ratio: number | null | undefined) {
+  if (secondary == null && ratio == null) return { secondary_unit: null, secondary_ratio: null }
+  if (typeof secondary !== 'string' || !(UNITS as readonly string[]).includes(secondary) || secondary === unit || typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio < 0.000001 || ratio > 1000000) throw validationError('数量关系需要不同的单位和有效换算值（0.000001—1000000）')
+  return { secondary_unit: secondary, secondary_ratio: ratio }
+}
+
 export function createStock(input: CreateStockInput): StandardIngredient {
   // 1. 定义必须存在
   const definition = getDefinitionById(input.definition_id)
@@ -394,6 +409,7 @@ export function createStock(input: CreateStockInput): StandardIngredient {
   assertUnitAllowed(input.definition_id, input.unit)
 
   // 类型收窄：上面的校验已保证二者存在
+  const relation = validateRelation(input.unit, input.secondary_unit, input.secondary_ratio)
   const requiredUnit: string = input.unit
   const requiredQuantity: number = input.quantity
 
@@ -418,12 +434,13 @@ export function createStock(input: CreateStockInput): StandardIngredient {
     ? normalizeNullableDate(input.expiry_date, '到期日期')
     : null
 
+  if (input.shelf_life_days !== undefined && (!Number.isInteger(input.shelf_life_days) || input.shelf_life_days < 0 || input.shelf_life_days > 36500 || input.expiry_date !== undefined)) throw validationError('本批保质期须为 0—36500 的整数天，且不能同时填写到期日期')
   const computed = computeExpiry({
     userProvidedExpiry,
     userExpiryDate,
     purchaseDate,
     productionDate,
-    estimatedShelfLifeDays: definition.estimated_shelf_life_days,
+    estimatedShelfLifeDays: input.shelf_life_days ?? definition.estimated_shelf_life_days,
   })
 
   // 7. 日期一致性
@@ -439,7 +456,7 @@ export function createStock(input: CreateStockInput): StandardIngredient {
   assertValidStorageMethod(storageMethod)
 
   const timestamp = nowIso()
-  const incomingQuantity = prepareQuantityForWrite(requiredQuantity)
+  const incomingQuantity = lotQuantity(requiredQuantity, relation.secondary_unit !== null)
 
   // 9. 写入：先查找同批次记录，找到则合并数量，否则新建。
   //
@@ -453,12 +470,13 @@ export function createStock(input: CreateStockInput): StandardIngredient {
       purchase_date: purchaseDate,
       storage_method: storageMethod,
       unit: requiredUnit,
+      ...relation,
       expiry_date: computed.expiry_date,
     })
 
     // 9a. 命中同批次 → 合并数量，**保留已有记录的 ID 与 note / production_date**
     if (match) {
-      const mergedQuantity = prepareQuantityForWrite(match.quantity + incomingQuantity)
+      const mergedQuantity = lotQuantity(match.quantity + incomingQuantity, relation.secondary_unit !== null)
 
       return tx
         .update(standardIngredient)
@@ -478,6 +496,7 @@ export function createStock(input: CreateStockInput): StandardIngredient {
         definition_id: input.definition_id,
         quantity: incomingQuantity,
         unit: requiredUnit,
+      ...relation,
         purchase_date: purchaseDate,
         production_date: productionDate,
         expiry_date: computed.expiry_date,
@@ -694,7 +713,7 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
   let nextQuantity = current.quantity
   if (input.quantity !== undefined) {
     assertValidQuantityValue(input.quantity)
-    nextQuantity = prepareQuantityForWrite(input.quantity)
+    nextQuantity = lotQuantity(input.quantity, (input.secondary_unit !== undefined ? input.secondary_unit : current.secondary_unit) != null)
   }
 
   // 入库日期
@@ -773,6 +792,9 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
     expirySource: nextExpirySource,
   })
 
+  const relation = validateRelation(nextUnit,
+    input.secondary_unit !== undefined ? input.secondary_unit : current.secondary_unit,
+    input.secondary_ratio !== undefined ? input.secondary_ratio : current.secondary_ratio)
   const nextNote = input.note !== undefined ? normalizeNullableText(input.note) : current.note
   const timestamp = nowIso()
 
@@ -794,6 +816,7 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
         purchase_date: nextPurchaseDate,
         storage_method: nextStorageMethod,
         unit: nextUnit,
+        ...relation,
         expiry_date: nextExpiryDate,
       },
       id, // 排除自身
@@ -801,7 +824,7 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
 
     // 命中同批次 → 把目标记录的数量并入当前记录，并删除目标记录
     if (match) {
-      const mergedQuantity = prepareQuantityForWrite(nextQuantity + match.quantity)
+      const mergedQuantity = lotQuantity(nextQuantity + match.quantity, relation.secondary_unit !== null)
 
       const updated = tx
         .update(standardIngredient)
@@ -809,6 +832,7 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
           definition_id: nextDefinitionId,
           quantity: mergedQuantity,
           unit: nextUnit,
+        ...relation,
           purchase_date: nextPurchaseDate,
           production_date: nextProductionDate,
           expiry_date: nextExpiryDate,
@@ -834,6 +858,7 @@ export function updateStock(id: number, input: UpdateStockInput): StandardIngred
         definition_id: nextDefinitionId,
         quantity: nextQuantity,
         unit: nextUnit,
+        ...relation,
         purchase_date: nextPurchaseDate,
         production_date: nextProductionDate,
         expiry_date: nextExpiryDate,
@@ -960,7 +985,7 @@ export function deleteStocks(ids: readonly number[]): BulkDeleteStockResult {
  *
  * @throws ServiceError INGREDIENT_NOT_FOUND / VALIDATION_ERROR / INSUFFICIENT_STOCK
  */
-export function consumeStock(id: number, amount: number): StandardIngredient {
+export function consumeStock(id: number, amount: number, unit?: string): StandardIngredient {
   if (typeof amount !== 'number' || !Number.isFinite(amount)) {
     throw validationError(`消耗数量不合法：${String(amount)}。必须是有限的数字`)
   }
@@ -969,9 +994,7 @@ export function consumeStock(id: number, amount: number): StandardIngredient {
   }
 
   const requestedAmount = roundQuantity(amount)
-  if (requestedAmount <= 0) {
-    throw validationError(`消耗数量过小，舍入后为 0：${amount}`)
-  }
+
 
   return db.transaction((tx) => {
     const current = tx
@@ -984,7 +1007,11 @@ export function consumeStock(id: number, amount: number): StandardIngredient {
       throw notFoundError(`库存记录不存在：id=${id}`)
     }
 
-    const raw = current.quantity - requestedAmount
+    if (requestedAmount <= 0 && current.secondary_unit === null) throw validationError('消耗数量过小')
+    const factor = unit === undefined ? 1 : unitFactor(current, unit)
+    if (!factor) throw validationError('这一批库存不支持该消耗单位，请重新打开后选择')
+    const actualAmount = current.secondary_unit !== null ? amount / factor : requestedAmount
+    const raw = current.quantity - actualAmount
 
     // 容差比较：只有**真实不足**才拒绝，浮点噪声不算
     if (raw < 0 && raw <= -QUANTITY_EPSILON) {
@@ -993,7 +1020,7 @@ export function consumeStock(id: number, amount: number): StandardIngredient {
       )
     }
 
-    const nextQuantity = prepareQuantityForWrite(raw)
+    const nextQuantity = lotQuantity(raw, current.secondary_unit !== null)
 
     return tx
       .update(standardIngredient)

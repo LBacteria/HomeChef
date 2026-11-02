@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { getMealPlans, applyMealPlan } from '../api/recommendation'
+import { listDefinitions } from '../api/definitions'
 import { listPreferences, setPreference } from '../api/recipes'
 import { getTagCategories, listTags } from '../api/tags'
 import PreferenceButtons from '../components/PreferenceButtons'
+import AssistantPanel from '../components/AssistantPanel'
+import { resolveDialogueTurn } from '../assistant-dialogue'
+import type { AssistantChatMessage, PendingDialogue } from '../assistant-dialogue'
+import type { AssistantChoice, AssistantConditions } from '../assistant'
+import type { AssistantMealOptions } from '../api/recommendation'
 import TagSelectDialog from '../components/TagSelectDialog'
 import { ApiError } from '../types/api'
 import type {
@@ -108,6 +114,24 @@ function newRequestId(): string {
 export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
   const [step, setStep] = useState<'people' | 'plans' | 'review'>('people')
   const [peopleInput, setPeopleInput] = useState('2')
+  const [conditions, setConditions] = useState<AssistantConditions>({ light: false, no_spicy: false, simple: 0 })
+  const [chatEpoch, setChatEpoch] = useState(0)
+  const chatId = useRef(1)
+  const [chatMessages, setChatMessages] = useState<AssistantChatMessage[]>([{ id: 0, role: 'assistant', text: '请输入用餐要求或操作。\n示例：两个人，清淡，牛肉，川菜。\n未识别内容会单独列出，确认前不应用。' }])
+  const pendingDialogue = useRef<PendingDialogue | null>(null)
+  function appendChat(role: AssistantChatMessage['role'], text: string) {
+    const message = { id: chatId.current++, role, text }
+    setChatMessages(previous => [...previous, message].slice(-40))
+  }
+  function setAssistantMessage(text: string) { if (mountedRef.current) appendChat('assistant', /^(?:已识别|未处理|未识别|处理|生成|筛选|操作|当前|下一步)/.test(text) ? text : '操作提示：' + text) }
+  const [assistantChoices, setAssistantChoices] = useState<AssistantChoice[]>([])
+  const assistantFocus = useRef<'plan' | 'soup'>('plan')
+  const replacedSoupIds = useRef<number[]>([])
+  const soupUndo = useRef<{ recipeIds: number[]; exclusions: number[]; oldName: string; newId: number } | null>(null)
+  const [soupChange, setSoupChange] = useState<{ before: string; after: string; recipeId: number; undone: boolean } | null>(null)
+  function clearSoupChange() { soupUndo.current = null; setSoupChange(null) }
+  useEffect(() => { clearSoupChange() }, [peopleInput, conditions])
+  const assistantLock = useRef(false)
   const [people, setPeople] = useState<number | null>(null)
   const [result, setResult] = useState<MealPlanResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -125,6 +149,7 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
   const [filterMode, setFilterMode] = useState<RecipeTagMode>('and')
   const [tagDialogOpen, setTagDialogOpen] = useState(false)
   const [tags, setTags] = useState<RecipeTagItem[]>([])
+  const [ingredientNames, setIngredientNames] = useState<string[]>([])
   const [tagsLoading, setTagsLoading] = useState(false)
   const [tagsError, setTagsError] = useState<string | null>(null)
   const [tagDict, setTagDict] = useState<TagCategoryDict | null>(null)
@@ -214,6 +239,7 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
         if (!cancelled) setTagsLoading(false)
       }
 
+      try { const definitions = await listDefinitions(); if (!cancelled) setIngredientNames(definitions.map(d => d.name)) } catch { /* Unknown names remain unhandled; do not invent database facts. */ }
       await loadTagDict()
       await loadPreferences()
     }
@@ -229,39 +255,195 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
    *
    * @param peopleOverride 显式人数（用于「评价变化后自动重新生成」）
    */
-  async function handleGenerate(peopleOverride?: number) {
+  async function handleGenerate(peopleOverride?: number, assistantOverride?: AssistantMealOptions): Promise<boolean> {
     const n = peopleOverride ?? Number(peopleInput)
     if (!Number.isInteger(n) || n < 1 || n > 12) {
       setError('人数请填 1–12 之间的整数。')
-      return
+      return false
     }
 
+    if (applyLock.current || prefWriteLock.current) return false
+    if (pendingDialogue.current) setAssistantMessage('先按页面里已确认的条件找菜，刚才没处理的要求没有应用。')
+    pendingDialogue.current = null
+    setAssistantChoices([])
+    setSelected(null)
+    setResult(null)
+    clearSoupChange()
+    assistantFocus.current = 'plan'
+    replacedSoupIds.current = []
+    setStep("people")
+    setApplyError(null)
+    requestIdRef.current = null
     const seq = ++plansSeq.current
     setLoading(true)
     setError(null)
     setInvalidNotice(null)
 
     try {
-      const data = await getMealPlans(n, filterTags, filterMode)
-      if (seq !== plansSeq.current) return
+      const data = await getMealPlans(n, filterTags, filterMode, assistantOverride ?? conditions)
+      if (!mountedRef.current || seq !== plansSeq.current) return false
       setPeople(n)
       setResult(data)
+      setAssistantMessage(`生成结果：${data.plans.length} 套方案。\n下一步：${data.plans.length ? '选择一套并核对备料。' : '无匹配方案。请调整已确认条件或补充菜谱及标签。'}`)
       setStep('plans')
       setSelected(null)
       setApplyError(null)
       requestIdRef.current = null
+      return true
     } catch (e) {
-      if (seq !== plansSeq.current) return
+      if (!mountedRef.current || seq !== plansSeq.current) return false
       setError(e instanceof ApiError ? e.message : '生成推荐失败，请稍后重试。')
+      return false
     } finally {
-      if (seq === plansSeq.current) setLoading(false)
+      if (mountedRef.current && seq === plansSeq.current) setLoading(false)
     }
   }
 
+  async function handleAssistant(text: string) {
+    if (assistantLock.current || applyLock.current || prefWriteLock.current || loading) return
+    appendChat('user', text)
+    const turn = resolveDialogueTurn(text, { hasSelectedPlan: selected !== null, hasPlans: !!result?.plans.length, focus: assistantFocus.current, ingredientNames, cuisineNames: tags.filter(t => t.category === 'cuisine').map(t => t.name) }, pendingDialogue.current)
+    if (turn.kind === 'question') {
+      pendingDialogue.current = turn.pending
+      setAssistantMessage(turn.message); setAssistantChoices(turn.choices); return
+    }
+    pendingDialogue.current = null
+    setAssistantChoices([])
+    if (turn.kind === 'cancel') { setAssistantMessage(turn.message); return }
+    const cmd = turn.command
+    if (cmd.action === 'reset') {
+      invalidateForFilterChange([], 'and')
+      setPeopleInput('2'); setPeople(null)
+      setConditions({ light: false, no_spicy: false, simple: 0 })
+      setChatMessages([{ id: chatId.current++, role: 'assistant', text: '处理结果：本餐已重置。人数为2人，其他条件不限。' }])
+      setChatEpoch(previous => previous + 1)
+      return
+    }
+    const next = { ingredients: cmd.ingredients ?? conditions.ingredients, cuisine: cmd.cuisine !== undefined ? cmd.cuisine || undefined : conditions.cuisine, light: cmd.light ?? conditions.light, no_spicy: cmd.no_spicy ?? conditions.no_spicy,
+      simple: cmd.simplify === undefined ? conditions.simple : cmd.simplify ? Math.min(2, conditions.simple + 1) : 0 }
+    const n = cmd.people ?? Number(peopleInput)
+    const changed = JSON.stringify(next.ingredients ?? []) !== JSON.stringify(conditions.ingredients ?? []) || next.cuisine !== conditions.cuisine || n !== Number(peopleInput) || next.light !== conditions.light || next.no_spicy !== conditions.no_spicy || next.simple !== conditions.simple
+    if (!Number.isInteger(n) || n < 1 || n > 12) { setAssistantMessage('请先选择 1–12 人。'); return }
+    if (changed) {
+      invalidateForFilterChange(filterTags, filterMode)
+      setConditions(next); setPeopleInput(String(n))
+      setInvalidNotice("本餐条件已改变，旧方案已作废。")
+    }
+    if (changed && cmd.action && !['recommend', 'another'].includes(cmd.action)) {
+      assistantLock.current = true
+      try {
+        const generated = await handleGenerate(n, next)
+        if (!generated) { if (mountedRef.current) setAssistantMessage('这次没找成功，下面有原因。条件已记下，可以重试。'); return }
+        if (mountedRef.current) setAssistantMessage('要求改好了，重新找了下面这些菜。先选一套，再继续核对或换汤。' + (cmd.timeRequested ? '不过还不能保证半小时做好。' : ''))
+      } finally { assistantLock.current = false }
+      return
+    }
+    if (cmd.timeRequested) {
+      if (changed || (!selected && !result)) {
+        assistantLock.current = true
+        try {
+          const generated = await handleGenerate(n, next)
+          if (!generated) { if (mountedRef.current) setAssistantMessage('这次没找成功，下面有原因。还不能保证半小时做好。'); return }
+        } finally { assistantLock.current = false }
+      }
+      if (mountedRef.current) {
+        setAssistantMessage('先按人数和口味找好了。不过没有可靠的整餐耗时，不能保证半小时做好。要再选省事些的做法吗？')
+        setAssistantChoices([{ label: '找快手菜', text: '简单点' }])
+      }
+      return
+    }
+    if (cmd.action === 'undo-soup') {
+      const undo = soupUndo.current
+      if (!undo || !selected || people === null || people !== Number(peopleInput) || !selected.dishes.some(d => d.recipe_id === undo.newId)) { setAssistantMessage('现在没有可撤回的换汤。改过条件或重选方案后，需要重新选菜。'); return }
+      assistantLock.current = true
+      const seq = ++plansSeq.current
+      setLoading(true); setError(null)
+      try {
+        const data = await getMealPlans(people, filterTags, filterMode, { ...conditions, keep_recipe_ids: undo.recipeIds, exact_keep: true })
+        if (!mountedRef.current || seq !== plansSeq.current) return
+        const fresh = data.plans[0]
+        if (!fresh || fresh.dishes.length !== undo.recipeIds.length || !undo.recipeIds.every(id => fresh.dishes.some(d => d.recipe_id === id))) { setAssistantMessage('原来的菜现在无法完整恢复，当前方案保留。可以重新选菜。'); return }
+        const restored = { ...fresh, dishes: undo.recipeIds.map(id => fresh.dishes.find(d => d.recipe_id === id)!) }
+        const oldSoup = restored.dishes.find(d => d.is_soup)
+        const currentSoup = selected.dishes.find(d => d.recipe_id === undo.newId)
+        setResult(previous => previous ? { ...previous, plans: previous.plans.map(plan => plan.plan_id === selected.plan_id ? restored : plan) } : data)
+        setSelected(restored); setApplyError(null); requestIdRef.current = null; setExpandedDish(null); setStep('review')
+        replacedSoupIds.current = undo.exclusions
+        soupUndo.current = null
+        assistantFocus.current = 'soup'
+        setSoupChange({ before: currentSoup?.recipe_name ?? '当前汤', after: undo.oldName, recipeId: oldSoup?.recipe_id ?? 0, undone: true })
+        setAssistantMessage('换回' + undo.oldName + '了。库存和整餐备料已重新核对，请看下面。')
+      } catch (e) { if (mountedRef.current && seq === plansSeq.current) setAssistantMessage(e instanceof ApiError ? e.message + ' 当前方案保留。' : '这次没换回成功，当前方案保留，可以重试。') }
+      finally { assistantLock.current = false; if (mountedRef.current && seq === plansSeq.current) setLoading(false) }
+      return
+    }
+    if (cmd.action === 'review' || cmd.action === 'start') {
+      if (!selected) { setAssistantMessage('先在下面选一套方案，我才能带你看这套的备料。'); return }
+      setStep('review')
+      setAssistantMessage(cmd.action === 'start' ? '请核对下面的菜品、份量和缺料，再点“确认，开始烹饪”。现在还没有扣库存。' : '下面是这套方案按整餐合并计算的备料和缺料，请往下看。')
+      return
+    }
+    if (cmd.action === 'replace-soup') {
+      if (!selected || people === null) { setAssistantMessage('请先在下面选一套方案，再换汤。'); return }
+      const soups = selected.dishes.filter(d => d.is_soup)
+      if (soups.length !== 1) { setAssistantMessage(soups.length ? '这套有不止一道汤，先用“换一套”选方案，或手动选菜。' : '这套方案没有标注为汤的菜，可以点“换一套”。'); return }
+      assistantLock.current = true
+      const seq = ++plansSeq.current
+      setLoading(true); setError(null)
+      try {
+        const data = await getMealPlans(people, filterTags, filterMode, { ...conditions,
+          keep_recipe_ids: selected.dishes.filter(d => d.recipe_id !== soups[0].recipe_id).map(d => d.recipe_id),
+          exclude_recipe_ids: [...new Set([...replacedSoupIds.current, soups[0].recipe_id])], replacement_role: 'soup' })
+        if (!mountedRef.current || seq !== plansSeq.current) return
+        const replacement = data.plans[0]
+        if (!replacement) { setAssistantMessage('没有符合条件的替代汤，原方案保留。可以调整条件或换一套。'); return }
+        const newSoup = replacement.dishes.find(d => d.is_soup)
+        if (!newSoup || replacement.dishes.length !== selected.dishes.length || !selected.dishes.filter(d => d.recipe_id !== soups[0].recipe_id).every(d => replacement.dishes.some(nextDish => nextDish.recipe_id === d.recipe_id))) { setAssistantMessage('这次换汤结果不完整，原方案保留，请重试。'); return }
+        replacement.dishes = selected.dishes.map(d => replacement.dishes.find(nextDish => nextDish.recipe_id === (d.recipe_id === soups[0].recipe_id ? newSoup.recipe_id : d.recipe_id))!)
+        soupUndo.current = { recipeIds: selected.dishes.map(d => d.recipe_id), exclusions: [...replacedSoupIds.current], oldName: soups[0].recipe_name, newId: newSoup.recipe_id }
+        setSoupChange({ before: soups[0].recipe_name, after: newSoup.recipe_name, recipeId: newSoup.recipe_id, undone: false })
+        replacedSoupIds.current = [...new Set([...replacedSoupIds.current, soups[0].recipe_id])]
+        assistantFocus.current = 'soup'
+        setResult(previous => previous ? { ...previous, plans: previous.plans.map(plan => plan.plan_id === selected.plan_id ? replacement : plan) } : data)
+        setSelected(replacement); requestIdRef.current = null; setApplyError(null)
+        setExpandedDish(null); setStep('review')
+        setAssistantMessage(`汤换成${replacement.dishes.find(d => d.is_soup)?.recipe_name ?? '另一道汤'}了，其他菜保留。备料也重新算好了。`)
+      } catch (e) { if (mountedRef.current && seq === plansSeq.current) setAssistantMessage(e instanceof ApiError ? e.message : '换汤失败，原方案保留，可以重试。') }
+      finally { assistantLock.current = false; if (mountedRef.current && seq === plansSeq.current) setLoading(false) }
+      return
+    }
+    if (cmd.action === 'another' && !changed && result && result.plans.length) {
+      const index = selected ? result.plans.findIndex(p => p.plan_id === selected.plan_id) : -1
+      const candidate = result.plans[index + 1]
+      if (!candidate) { setAssistantMessage('这批方案已经看完了，可以改口味或点“推荐一下”重新选。'); return }
+      choosePlan(candidate); setAssistantMessage('换到下一套了。可以看备料，或继续换一套。'); return
+    }
+    if (!changed && !cmd.action && selected) {
+      setAssistantMessage('这套已经符合当前要求，先保留。想换菜也可以继续说。')
+      return
+    }
+    assistantLock.current = true
+    assistantFocus.current = 'plan'
+    setAssistantMessage('处理状态：正在按已确认条件生成方案。')
+    try {
+      const generated = await handleGenerate(n, next)
+      if (!generated && mountedRef.current) setAssistantMessage('这次没找成功，下面有原因，可以再试一次。')
+    } finally { assistantLock.current = false }
+  }
+
+  const assistantPanel = <AssistantPanel key={chatEpoch} people={peopleInput} conditions={conditions} messages={chatMessages}
+    busy={loading || applying || prefSaving} choices={assistantChoices} onSay={text => { void handleAssistant(text) }} />
+
   function choosePlan(plan: RecommendationPlan) {
     // ⚠️ 评价写入在途时禁止换方案：新方案会基于**尚未确认**的评价打分
-    if (prefWriteLock.current) return
+    if (prefWriteLock.current || assistantLock.current || loading || applyLock.current) return
     setSelected(plan)
+    clearSoupChange()
+    pendingDialogue.current = null
+    assistantFocus.current = 'plan'
+    replacedSoupIds.current = []
+    setAssistantChoices([])
+    setAssistantMessage('处理结果：方案已选定。\n下一步：核对备料，或继续调整。')
     setApplyError(null)
     setExpandedDish(null)
     // 换方案 = 新的确认意图 → 新的幂等键
@@ -279,6 +461,11 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
    */
   function invalidateForFilterChange(nextTags: string[], nextMode: RecipeTagMode) {
     plansSeq.current++
+    clearSoupChange()
+    pendingDialogue.current = null
+    assistantFocus.current = 'plan'
+    replacedSoupIds.current = []
+    setAssistantChoices([])
     setLoading(false)
     setFilterTags(nextTags)
     setFilterMode(nextMode)
@@ -303,7 +490,8 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
    * - 错误同时抛给 `PreferenceButtons`，按钮处也会显示一行错误。
    */
   async function handleDishPreference(recipeId: number, next: RecipePreferenceValue | null) {
-    if (prefWriteLock.current || applyLock.current || !prefReady) return
+    if (prefWriteLock.current || applyLock.current || assistantLock.current || loading || !prefReady) return
+    clearSoupChange()
     prefWriteLock.current = true
     setPrefSaving(true)
     setPrefSaveError(null)
@@ -340,7 +528,8 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
   }
 
   async function handleApply() {
-    if (selected === null || people === null) return
+    if (pendingDialogue.current) { setAssistantMessage('还有一句要求没确认。先回答上面的追问，或者说“先不改”，再核对这套菜。'); return }
+    if (selected === null || people === null || assistantLock.current || loading) return
     if (applyLock.current) return // ⚠️ 同步互斥：防连点
     // ⚠️ 评价还在保存时**禁止**创建会话：否则会按"旧评价"的方案落库
     if (prefWriteLock.current) return
@@ -445,6 +634,7 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
   if (step === 'people') {
     return (
       <section className="rec-page">
+        {assistantPanel}
         <div className="section-header">
           <h2>今天做几人份？</h2>
           <button type="button" onClick={onBack}>
@@ -574,6 +764,7 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
     const plans = result?.plans ?? []
     return (
       <section className="rec-page">
+        {assistantPanel}
         <div className="section-header">
           <h2>{people} 人份 · 推荐方案</h2>
           <button type="button" onClick={() => setStep('people')}>
@@ -760,6 +951,7 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
 
   return (
     <section className="rec-page">
+        {assistantPanel}
       <div className="section-header">
         <h2>核对这套整餐</h2>
         <button type="button" onClick={() => setStep('plans')} disabled={applying}>
@@ -767,6 +959,10 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
         </button>
       </div>
 
+      {soupChange && <div className="rec-soup-change" role="status">
+        <p>{soupChange.undone ? '已换回' : '刚换好'}：{soupChange.before} → {soupChange.after}。其他菜保留，备料已重新计算。</p>
+        {soupUndo.current && <button type="button" disabled={loading || applying || prefSaving || pendingDialogue.current !== null} onClick={() => void handleAssistant('撤回换汤')}>撤回上一次换汤</button>}
+      </div>}
       <div className="rec-review-block">
         <h3>菜品与份量</h3>
         <p className="rec-muted">
@@ -791,13 +987,14 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
           {plan.dishes.map((d) => {
             const open = expandedDish === d.recipe_id
             return (
-              <li key={d.recipe_id} className="rec-dish-item">
+              <li key={d.recipe_id} className={`rec-dish-item${soupChange?.recipeId === d.recipe_id ? ' rec-dish-changed' : ''}`}>
                 <div className="rec-dish-row">
                   {/* v0.2.4：角色由后端给出，前端不猜 */}
                   <span className={`rec-role-tag rec-role-${d.role_in_meal}`}>
                     {d.role_in_meal === 'main' ? '主菜' : '配菜'}
                   </span>
                   <span className="rec-dish-name">{d.recipe_name}</span>
+                  {soupChange?.recipeId === d.recipe_id && <span className="rec-change-tag">{soupChange.undone ? '已换回' : '刚换好'}</span>}
                   <span className="rec-muted">{d.servings} 倍量</span>
                   <button
                     type="button"
@@ -943,13 +1140,16 @@ export default function RecommendPage({ onBack, onApplied, onManual }: Props) {
         </div>
       )}
 
+      {pendingDialogue.current && <p className="rec-notice">先回复小助手的问题，或选“先不改”，再确认这套菜。</p>}
       <div className="rec-actions">
         <button
           type="button"
           className="primary"
           disabled={
             applying ||
+            loading ||
             prefSaving ||
+            pendingDialogue.current !== null ||
             applyError?.kind === 'stale' ||
             applyError?.kind === 'idem'
           }

@@ -29,7 +29,7 @@ import {
  */
 
 const APP_NAME = 'HomeChef'
-const APP_VERSION = '0.2.5'
+const APP_VERSION = '0.3.0'
 const IS_DEV = !app.isPackaged
 
 // 主进程用 CommonJS：Electron 对 CJS 入口支持最稳，

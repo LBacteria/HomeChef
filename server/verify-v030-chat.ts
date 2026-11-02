@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict'
+import { resolveDialogueTurn } from '../client/src/assistant-dialogue.js'
+import type { PendingDialogue } from '../client/src/assistant-dialogue.js'
+let passed=0
+function check(name:string,fn:()=>void){fn();passed++;console.log('PASS '+name)}
+const selected={hasSelectedPlan:true,hasPlans:true,focus:'plan' as const}
+let pending:PendingDialogue|null=null
+check('换一个先问范围',()=>{const t=resolveDialogueTurn('换一个',selected,null);assert.equal(t.kind,'question');if(t.kind!=='question')throw Error();assert.equal(t.pending?.kind,'change');pending=t.pending})
+check('短答汤接上追问',()=>assert.deepEqual(resolveDialogueTurn('汤',selected,pending),{kind:'command',command:{action:'replace-soup'}}))
+check('补充解释接上追问',()=>assert.deepEqual(resolveDialogueTurn('我指的是汤',selected,pending),{kind:'command',command:{action:'replace-soup'}}))
+check('整套澄清走原动作',()=>assert.deepEqual(resolveDialogueTurn('整套',selected,pending),{kind:'command',command:{action:'another'}}))
+check('无追问时孤立汤不执行',()=>assert.equal(resolveDialogueTurn('汤',selected,null).kind,'question'))
+check('刚换汤后的省略语',()=>assert.deepEqual(resolveDialogueTurn('再换一个',{...selected,focus:'soup'},null),{kind:'command',command:{action:'replace-soup'}}))
+check('部分理解先确认',()=>{const t=resolveDialogueTurn('两个人简单吃吃，不要香菜',{},null);assert.equal(t.kind,'question');if(t.kind!=='question')throw Error();assert.equal(t.pending?.kind,'partial');assert.match(t.message,/不要香菜/);pending=t.pending})
+check('明确同意只应用已懂条件',()=>assert.deepEqual(resolveDialogueTurn('暂不应用这些要求，继续选菜',{},pending),{kind:'command',command:{people:2,simplify:true,action:'recommend'}}))
+check('追加条件不吞忌口',()=>{const t=resolveDialogueTurn('清淡点',{},pending);assert.equal(t.kind,'question');if(t.kind!=='question'||t.pending?.kind!=='partial')throw Error();assert.match(t.message,/不要香菜/);assert.equal(t.pending.command.light,true)})
+check('新增未知词保留旧忌口',()=>{const t=resolveDialogueTurn('清淡点不要花生',{},pending);assert.equal(t.kind,'question');if(t.kind!=='question')throw Error();assert.match(t.message,/不要香菜/);assert.match(t.message,/不要花生/)})
+check('重新表述也不悄悄丢弃忌口',()=>{const t=resolveDialogueTurn('我的意思是清淡点',{},pending);assert.equal(t.kind,'question');if(t.kind==='question')assert.match(t.message,/不要香菜/)})
+check('取消不产生业务动作',()=>assert.equal(resolveDialogueTurn('先不改',{},pending).kind,'cancel'))
+check('重来不被追问拦住',()=>assert.deepEqual(resolveDialogueTurn('重新开始',{},pending),{kind:'command',command:{action:'reset'}}))
+check('未知库存指令不会执行',()=>{const t=resolveDialogueTurn('两个人，删除库存',{},null);assert.equal(t.kind,'question');if(t.kind!=='question')throw Error();assert.deepEqual(resolveDialogueTurn('暂不应用这些要求，继续选菜',{},t.pending),{kind:'command',command:{people:2,action:'recommend'}})})
+check('口头同意仅核对',()=>assert.deepEqual(resolveDialogueTurn('可以，就这个',selected,null),{kind:'command',command:{action:'start'}}))
+check('未选餐不能开始',()=>assert.equal(resolveDialogueTurn('可以，就这个',{},null).kind,'question'))
+check('人数冲突不允许部分确认',()=>{const t=resolveDialogueTurn('两个人三个人',{},null);assert.equal(t.kind,'question');if(t.kind==='question')assert.equal(t.pending,null)})
+check('否定冲突不允许部分确认',()=>{const t=resolveDialogueTurn('清淡点不用清淡',{},null);assert.equal(t.kind,'question');if(t.kind==='question')assert.equal(t.pending,null)})
+check('含糊同意不能越过换菜范围追问',()=>assert.equal(resolveDialogueTurn('可以',selected,{kind:'change'}).kind,'question'))
+check('解释不辣保留已懂人数',()=>{const t=resolveDialogueTurn('两个人不要太辣',{},null);assert.equal(t.kind,'question');if(t.kind!=='question')throw Error();assert.deepEqual(resolveDialogueTurn('不辣',{},t.pending),{kind:'command',command:{people:2,no_spicy:true}})})
+check('没方案时先提示选菜',()=>{const t=resolveDialogueTurn('换一个',{},null);assert.equal(t.kind,'question');if(t.kind==='question'){assert.equal(t.pending,null);assert.match(t.message,/先生成或选择/)}})
+for(const answer of ['好','好的','可以','先这样','先找菜','就按这些'])check('含糊答复不跳过忌口 '+answer,()=>assert.equal(resolveDialogueTurn(answer,{},pending).kind,'question'))
+for(const text of ['不是两个人，是三个人','两个人说错了，改成三个人','今晚不是两人是三人'])check('明确人数改口 '+text,()=>assert.deepEqual(resolveDialogueTurn(text,{},null),{kind:'command',command:{people:3}}))
+for(const text of ['不是三个人','两人或者三人','不是两人是13人','不是13人是三人','不是两个人，是三个人，别放花生'])check('不能静默应用改口 '+text,()=>assert.equal(resolveDialogueTurn(text,{},null).kind,'question'))
+check('人数改口保留同句其他条件',()=>assert.deepEqual(resolveDialogueTurn('不是两个人，是三个人，清淡点',{},null),{kind:'command',command:{people:3,light:true}}))
+for(const text of ['撤回换汤','撤回上一次换汤','刚才那个汤还是要吧','换回原来的汤'])check('撤回说法 '+text,()=>assert.deepEqual(resolveDialogueTurn(text,selected,null),{kind:'command',command:{action:'undo-soup'}}))
+check('待确认忌口不能被撤回绕过',()=>assert.equal(resolveDialogueTurn('撤回换汤',selected,pending).kind,'question'))
+check('食材与菜系组合',()=>assert.deepEqual(resolveDialogueTurn('两个人，清淡，牛肉，川菜',{},null),{kind:'command',command:{people:2,light:true,ingredients:['牛肉'],cuisine:'川菜'}}))
+check('数据库食材名称可直接指定',()=>assert.deepEqual(resolveDialogueTurn('用鸡蛋',{ingredientNames:['鸡蛋']},null),{kind:'command',command:{ingredients:['鸡蛋']}}))
+check('清除食材菜系要求',()=>assert.deepEqual(resolveDialogueTurn('不限食材，不限菜系',{},null),{kind:'command',command:{ingredients:[],cuisine:''}}))
+check('不把否定牛肉理解成指定牛肉',()=>{const t=resolveDialogueTurn('两个人不要牛肉',{},null);assert.equal(t.kind,'question');if(t.kind==='question'&&t.pending?.kind==='partial')assert.equal(t.pending.command.ingredients,undefined)})
+check('多个菜系同句需澄清',()=>assert.equal(resolveDialogueTurn('川菜，西餐',{},null).kind,'question'))
+check('无效词与已识别字段分开输出',()=>{const t=resolveDialogueTurn('两个人，清淡，一些，搞点牛肉',{},null);assert.equal(t.kind,'question');if(t.kind!=='question'||t.pending?.kind!=='partial')throw Error();assert.deepEqual(t.pending.command.ingredients,['牛肉']);assert.match(t.message,/已识别/);assert.match(t.message,/一些/);assert.match(t.message,/搞点/)})
+console.log(JSON.stringify({passed}))

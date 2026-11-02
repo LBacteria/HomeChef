@@ -219,6 +219,8 @@ export const standardIngredient = sqliteTable(
     quantity: real('quantity').notNull().default(0),
 
     unit: text('unit').notNull(),
+    secondary_unit: text('secondary_unit'),
+    secondary_ratio: real('secondary_ratio'),
 
     // 入库日期：NOT NULL，用户不填时默认今天
     purchase_date: text('purchase_date').notNull(),

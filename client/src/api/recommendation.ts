@@ -16,12 +16,25 @@ import type { ApplyPlanResult, MealPlanResult, RecipeTagMode } from '../types/ap
  * ⚠️ 筛选条件变化后，**此前拿到的方案必须作废并重新生成** ——
  *    旧方案的 `snapshot_id` 对应的菜谱集合已经不同了。
  */
+export interface AssistantMealOptions {
+  ingredients?: string[]
+  cuisine?: string
+  exact_keep?: boolean
+  replacement_role?: 'soup'
+  light?: boolean
+  no_spicy?: boolean
+  simple?: number
+  keep_recipe_ids?: number[]
+  exclude_recipe_ids?: number[]
+}
+
 export function getMealPlans(
   people: number,
   tags: string[] = [],
   tagMode: RecipeTagMode = 'and',
+  assistant?: AssistantMealOptions,
 ): Promise<MealPlanResult> {
-  const body: { people: number; tags?: string[]; tag_mode?: RecipeTagMode } = { people }
+  const body: { people: number; tags?: string[]; tag_mode?: RecipeTagMode; assistant?: AssistantMealOptions } = { people, assistant }
   if (tags.length > 0) {
     body.tags = tags
     body.tag_mode = tagMode

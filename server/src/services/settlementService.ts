@@ -1,3 +1,4 @@
+import { unitFactor, remainingLot } from './unitRelation.js'
 import { asc, eq } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
@@ -19,7 +20,7 @@ import {
   sessionStateInvalidError,
   validationError,
 } from './errors.js'
-import { QUANTITY_EPSILON, prepareQuantityForWrite, roundQuantity, scaleLineQuantity } from './quantity.js'
+import { QUANTITY_EPSILON, roundQuantity, scaleLineQuantity } from './quantity.js'
 import { availableStockRows, hasUnitMatchedLot } from './stockAvailability.js'
 import {
   deriveRequiredReason,
@@ -165,7 +166,8 @@ function collectDemands(q: Queryable, sessionId: number): Demand[] {
     }
   }
 
-  return demands
+  // 与推荐按相同的食材、单位顺序分配；不同单位共用的批次不会因菜序不同而重复占用。
+  return demands.sort((a,b) => a.definition_id - b.definition_id || ((a.unit ?? '\uffff') < (b.unit ?? '\uffff') ? -1 : (a.unit ?? '\uffff') > (b.unit ?? '\uffff') ? 1 : 0))
 }
 
 /**
@@ -221,8 +223,9 @@ function consumeAcrossRecords(
   for (const row of rows) {
     if (remaining <= QUANTITY_EPSILON) break
 
-    const take = Math.min(remaining, row.quantity)
-    const nextQuantity = prepareQuantityForWrite(row.quantity - take)
+    const factor = unitFactor(row, unit)
+    const take = Math.min(remaining, row.quantity * factor)
+    const nextQuantity = remainingLot(row, take, unit)
 
     tx.update(standardIngredient)
       .set({ quantity: nextQuantity, updated_at: timestamp })
@@ -516,21 +519,14 @@ export function previewSettlement(sessionId: number): {
    *    （默认排除过期、遵守 allow_expired_for_recipe、只看 quantity > 0），
    *    并保持同一 FEFO 顺序（有到期在前 → 到期升序 → id 升序）。
    */
-  const stockCopy = new Map<string, Array<{ id: number; quantity: number }>>()
+  const stockCopy = new Map<number, number>()
   function remainingRows(definitionId: number, unit: string) {
-    const key = `${definitionId}|${unit}`
-    let rows = stockCopy.get(key)
-    if (rows === undefined) {
-      rows = availableStockRows(db, definitionId, unit).map((r) => ({
-        id: r.id,
-        quantity: r.quantity,
-      }))
-      stockCopy.set(key, rows)
-    }
-    return rows
+    return availableStockRows(db, definitionId, unit).map(r => {
+      if (!stockCopy.has(r.id)) stockCopy.set(r.id, r.quantity)
+      return { id: r.id, factor: unitFactor(r, unit), quantity: stockCopy.get(r.id)! * unitFactor(r, unit) }
+    })
   }
-  const totalOf = (rows: Array<{ quantity: number }>): number =>
-    rows.reduce((sum, r) => roundQuantity(sum + r.quantity), 0)
+  const totalOf = (rows: Array<{ quantity: number }>): number => rows.reduce((sum, r) => roundQuantity(sum + r.quantity), 0)
 
   const items: Array<{
     dish_id: number
@@ -634,6 +630,7 @@ export function previewSettlement(sessionId: number): {
           if (need <= QUANTITY_EPSILON) break
           const take = Math.min(need, row.quantity)
           row.quantity = roundQuantity(row.quantity - take)
+          stockCopy.set(row.id, row.quantity / row.factor)
           need = roundQuantity(need - take)
         }
         canConsume = available + QUANTITY_EPSILON >= d.quantity

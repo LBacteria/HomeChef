@@ -8,7 +8,7 @@ Electron 外壳 + 仓库现有的 Fastify / SQLite 后端。**用户不需要安
 
 两种形态，任选其一：
 
-- **安装包**：`release/HomeChef-Setup-0.2.5.exe`（NSIS，按用户安装，可改安装目录，约 100 MB）
+- **安装包**：`release/HomeChef-Setup-0.3.0.exe`（NSIS，按用户安装，可改安装目录，约 100 MB）
 - **免安装**：`release/win-unpacked/HomeChef.exe`
 
 系统要求：Windows 10 / 11 x64。
@@ -37,7 +37,7 @@ Electron 外壳 + 仓库现有的 Fastify / SQLite 后端。**用户不需要安
 
 ## 持久化与升级
 
-- 首次启动自动建库，并按顺序执行 `server/drizzle` 下的 15 个迁移。
+- 首次启动自动建库，并按顺序执行 `server/drizzle` 下的 16 个迁移。
 - **升级只应用尚未执行的迁移**（靠 `__drizzle_migrations` 判定），不会重建库、不会清空用户数据。
 - 安装包默认 `deleteAppDataOnUninstall: false`，卸载不删数据。
 - 需要回退或搬迁时，用「文件 → 导出备份 / 从备份恢复」。

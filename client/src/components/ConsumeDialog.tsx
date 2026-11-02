@@ -13,11 +13,13 @@ import { formatQuantity, formatQuantityWithUnit } from '../format'
 interface Props {
   record: InventoryRecord
   definitionName: string
-  onSubmit: (amount: number) => Promise<void>
+  onSubmit: (amount: number, unit: string) => Promise<void>
   onCancel: () => void
 }
 
 export default function ConsumeDialog({ record, definitionName, onSubmit, onCancel }: Props) {
+  const [useSecondary, setUseSecondary] = useState(false)
+  const factor = useSecondary ? record.secondary_ratio ?? 1 : 1
   const [amount, setAmount] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -26,7 +28,7 @@ export default function ConsumeDialog({ record, definitionName, onSubmit, onCanc
   const valid = amount.trim().length > 0 && Number.isFinite(parsed) && parsed > 0
 
   /** 预览剩余量（仅显示，不改变任何数据） */
-  const remaining = valid ? formatQuantity(record.quantity - parsed) : null
+  const remaining = valid ? formatQuantity(record.quantity - parsed / factor) : null
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -40,7 +42,7 @@ export default function ConsumeDialog({ record, definitionName, onSubmit, onCanc
     setError(null)
 
     try {
-      await onSubmit(parsed)
+      await onSubmit(parsed, useSecondary ? record.secondary_unit! : record.unit)
     } catch (err) {
       if (err instanceof ApiError && err.code === 'INSUFFICIENT_STOCK') {
         // 显示后端返回的具体信息（含需要量与现存量）
@@ -77,7 +79,7 @@ export default function ConsumeDialog({ record, definitionName, onSubmit, onCanc
             />
           </label>
 
-          <p className="modal-meta">单位：{record.unit}</p>
+          <label>单位<select value={useSecondary ? 'secondary' : 'primary'} onChange={e => setUseSecondary(e.target.value === 'secondary')}><option value="primary">{record.unit}</option>{record.secondary_unit && <option value="secondary">{record.secondary_unit}</option>}</select></label>
 
           {remaining !== null && (
             <p className="consume-preview">

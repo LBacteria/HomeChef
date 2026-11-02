@@ -4,7 +4,7 @@ export async function validateCore(){
  const checks:string[]=[];
  function check(value:unknown,name:string){if(!value)throw Error(name);checks.push(name);}
  const call=async(method:string,path:string,body?:unknown,expected=200)=>{const response=await localRequest('/api'+path,{method,...(body===undefined?{}:{body:JSON.stringify(body)})});const data=response.status===204?null:await response.json();if(response.status!==expected)throw Error(`${method} ${path}: expected ${expected}, got ${response.status}: ${JSON.stringify(data)}`);return data;};
- check((sqlite.prepare('SELECT count(*) n FROM __drizzle_migrations').get() as {n:number}).n===15,'15个正式迁移已执行');
+ check((sqlite.prepare('SELECT count(*) n FROM __drizzle_migrations').get() as {n:number}).n===16,'16个正式迁移已执行');
  if((sqlite.prepare('SELECT count(*) n FROM ingredient_definition').get() as {n:number}).n){await (await import('./validate-rollback')).validateRollback();return;}
  await call('POST','/definitions',{name:'非法',units:['个'],extra:true},400);checks.push('未知字段拒绝');
  await call('POST','/definitions',{name:'非法',units:['个'],estimated_shelf_life_days:'7'},400);checks.push('禁止字符串数字强制转换');
@@ -19,6 +19,15 @@ export async function validateCore(){
  const recipes=[];for(const [i,name]of ['番茄炒蛋','清炒青菜','蒸鸡蛋'].entries())recipes.push(await call('POST','/recipes',{name,ingredients:[{definition_id:defs[i===1?2:0].id,quantity:2,unit:'个'},{definition_id:salt.id,quantity:null,unit:null}],tags:i===1?['素菜']:['荤菜'],steps:['准备食材','烹饪完成']},201));
  check(recipes.every(r=>r.id&&r.ingredients.length===2),'菜谱完整保存与步骤');
  await call('PUT',`/recipes/${recipes[0].id}/preference`,{value:'like'});checks.push('菜谱偏好');
+ const nativeSoups:Array<{id:number}>=[];
+ for(const name of ['离线清汤甲','离线清汤乙'])nativeSoups.push(await call('POST','/recipes',{name,ingredients:[{definition_id:defs[0].id,quantity:1,unit:'个'}],tags:['汤','清淡','快手菜'],steps:['煮熟食材']},201));
+ const assistant=await call('POST','/recommendation/meal-plans',{people:2,assistant:{light:true,no_spicy:true,simple:2}});
+ check(assistant.plans.length>0&&assistant.plans.every((p:any)=>p.dishes.length===2&&p.dishes.every((d:any)=>d.is_soup)),'离线助手清淡不辣与简餐筛选');
+ const stockBeforeAssistant=JSON.stringify(await call('GET','/ingredients'));
+ const swap=await call('POST','/recommendation/meal-plans',{people:2,assistant:{keep_recipe_ids:[recipes[0].id,recipes[1].id],exclude_recipe_ids:[nativeSoups[0].id],replacement_role:'soup'}});
+ check(swap.plans.length>0&&swap.plans[0].dishes.some((d:any)=>d.recipe_id===nativeSoups[1].id)&&[recipes[0].id,recipes[1].id].every(id=>swap.plans[0].dishes.some((d:any)=>d.recipe_id===id)),'离线助手仅换汤且保留原菜');
+ check(stockBeforeAssistant===JSON.stringify(await call('GET','/ingredients')),'离线助手选餐换汤不扣库存');
+ await call('POST','/recommendation/meal-plans',{people:2,assistant:{simple:3}},400);checks.push('离线助手参数严格校验');
  const recommendations=await call('POST','/recommendation/meal-plans',{people:2});check(recommendations.plans.length>0,'离线整餐推荐');
  const plan=recommendations.plans[0],request_id=crypto.randomUUID();const payload={people:2,dishes:plan.dishes.map((d:any)=>({recipe_id:d.recipe_id,servings:d.servings})),snapshot_id:plan.snapshot_id,request_id};
  const applied=await call('POST','/recommendation/apply',payload);const replay=await call('POST','/recommendation/apply',payload);

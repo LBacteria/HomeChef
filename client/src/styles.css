@@ -3032,3 +3032,31 @@ button.danger:hover:not(:disabled) {
 .starter-content-panel{border:1px solid #d4e0d8;border-radius:16px;padding:18px;margin:18px 0}
 .starter-content-panel p{line-height:1.6}
 .starter-content-panel button{min-height:44px;max-width:100%}
+
+/* 库存默认紧凑显示；到期状态始终可见，详情和操作可展开。 */
+.inventory-density { display:flex; align-items:center; gap:8px; margin:8px 0 14px; }
+.inventory-density select { width:auto; max-width:180px; }
+.record-details-toggle { font:inherit; font-size:.8rem; padding:4px 8px; margin:4px 0; border:1px solid var(--border); border-radius:6px; background:white; }
+.inventory-detail .record-details-toggle { display:none; }
+.inventory-view:not(.inventory-detail) .record-item:not(.record-expanded) .record-meta,
+.inventory-view:not(.inventory-detail) .record-item:not(.record-expanded) .record-actions { display:none; }
+.inventory-view:not(.inventory-detail) .group-card { padding:10px 12px; }
+.inventory-view:not(.inventory-detail) .group-header { margin-bottom:4px; }
+.inventory-view:not(.inventory-detail) .record-item { padding:6px 0; min-width:0; }
+.inventory-view:not(.inventory-detail) .record-quantity { margin:0; }
+.inventory-view:not(.inventory-detail) .record-main { min-width:0; }
+.inventory-tiles .group-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
+.inventory-tiles .group-header { flex-wrap:wrap; gap:4px; }
+.inventory-tiles .group-name { font-size:1rem; overflow-wrap:anywhere; }
+.inventory-tiles .group-count { font-size:.75rem; }
+.inventory-tiles .record-item { flex-wrap:wrap; }
+.inventory-tiles .record-actions { flex-wrap:wrap; }
+@media(max-width:600px) { .inventory-view:not(.inventory-detail) .group-name { font-size:1rem; } .inventory-view:not(.inventory-detail) .group-card { margin-bottom:8px; } .inventory-tiles .group-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+.transfer-buttons { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+.inventory-transfer fieldset { margin:12px 0; border:1px solid var(--border); border-radius:8px; padding:10px; min-width:0; }
+.inventory-transfer textarea { overflow-wrap:anywhere; width:100%; box-sizing:border-box; }
+.file-button { border:1px solid var(--border); border-radius:6px; padding:6px 10px; cursor:pointer; }
+.file-button input { display:block; max-width:100%; margin-top:6px; }
+.transfer-preview { max-height:240px; overflow:auto; padding-left:22px; }
+.transfer-preview li { margin:8px 0; }

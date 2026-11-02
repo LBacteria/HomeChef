@@ -12,6 +12,7 @@ import {
   recommendMealPlans,
   validatePeople,
 } from '../services/recommendationService.js'
+import type { AssistantMealFilter } from '../services/recommendationService.js'
 import {
   MAX_PEOPLE,
   MAX_SERVINGS_MULTIPLIER,
@@ -43,6 +44,19 @@ const mealPlansBodySchema = {
     tags: { type: 'array', items: { type: 'string', minLength: 1 } },
     /** v0.2.3：Tag 筛选模式，'and'（默认）| 'or' */
     tag_mode: { type: 'string', enum: ['and', 'or'] },
+    assistant: {
+      type: 'object', additionalProperties: false,
+      properties: {
+                  ingredients: { type: 'array', maxItems: 4, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 60 } },
+          cuisine: { type: 'string', minLength: 1, maxLength: 60 },
+          exact_keep: { type: 'boolean' },
+light: { type: 'boolean' }, no_spicy: { type: 'boolean' },
+        replacement_role: { type: 'string', enum: ['soup'] },
+        simple: { type: 'integer', minimum: 0, maximum: 2 },
+        keep_recipe_ids: { type: 'array', maxItems: 4, uniqueItems: true, items: { type: 'integer', minimum: 1 } },
+        exclude_recipe_ids: { type: 'array', maxItems: 100, uniqueItems: true, items: { type: 'integer', minimum: 1 } },
+      },
+    },
   },
 } as const
 
@@ -127,7 +141,7 @@ export function registerRecommendationRoutes(app: FastifyInstance): void {
    *
    * 200 / 400
    */
-  app.post<{ Body: { people: number; tags?: string[]; tag_mode?: 'and' | 'or' } }>(
+  app.post<{ Body: { people: number; tags?: string[]; tag_mode?: 'and' | 'or'; assistant?: AssistantMealFilter } }>(
     '/api/recommendation/meal-plans',
     { schema: { body: mealPlansBodySchema } },
     async (request, reply) => {
@@ -136,6 +150,7 @@ export function registerRecommendationRoutes(app: FastifyInstance): void {
         recommendMealPlans(people, undefined, {
           tags: request.body.tags ?? [],
           tagMode: request.body.tag_mode,
+          assistant: request.body.assistant,
         }),
       )
     },

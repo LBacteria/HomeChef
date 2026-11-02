@@ -1,3 +1,4 @@
+import { unitFactor } from './unitRelation.js'
 import { and, asc, eq, sql } from 'drizzle-orm'
 
 import { db } from '../db/index.js'
@@ -34,7 +35,7 @@ export function availableStockRows(q: AvailabilityQueryable, definitionId: numbe
     .where(
       and(
         eq(standardIngredient.definition_id, definitionId),
-        eq(standardIngredient.unit, unit),
+
       ),
     )
     .orderBy(
@@ -43,7 +44,7 @@ export function availableStockRows(q: AvailabilityQueryable, definitionId: numbe
       asc(standardIngredient.id),
     )
     .all()
-    .filter((r) => r.quantity > 0)
+    .filter((r) => r.quantity > 0 && unitFactor(r, unit) > 0)
 
   const settings = getSettings()
   if (settings.allow_expired_for_recipe) {
@@ -77,7 +78,7 @@ export function sumAvailableQuantity(
   unit: string,
 ): number {
   return availableStockRows(q, definitionId, unit).reduce(
-    (sum, r) => roundQuantity(sum + r.quantity),
+    (sum, r) => roundQuantity(sum + r.quantity * unitFactor(r, unit)),
     0,
   )
 }
@@ -93,16 +94,5 @@ export function hasUnitMatchedLot(
   definitionId: number,
   unit: string,
 ): boolean {
-  return (
-    q
-      .select({ id: standardIngredient.id })
-      .from(standardIngredient)
-      .where(
-        and(
-          eq(standardIngredient.definition_id, definitionId),
-          eq(standardIngredient.unit, unit),
-        ),
-      )
-      .get() !== undefined
-  )
+  return q.select().from(standardIngredient).where(eq(standardIngredient.definition_id, definitionId)).all().some(r => unitFactor(r, unit) > 0)
 }

@@ -14,6 +14,22 @@ import java.io.*;
 @CapacitorPlugin(name="HomeChefFiles")
 public class DataFilesPlugin extends Plugin {
     private boolean pending;
+    @PluginMethod public void exportDocument(PluginCall call){
+        if(pending){call.reject("已有文件操作等待完成");return;}
+        String name=call.getString("name"), data=call.getString("data");
+        if(name==null||!name.matches("HomeChef-[^/\\\\]+\\.xlsx")||data==null||data.length()>14000000){call.reject("导出文件格式或大小无效");return;}
+        pending=true;
+        Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");intent.putExtra(Intent.EXTRA_TITLE,name);
+        try{startActivityForResult(call,intent,"documentResult");}catch(Exception e){pending=false;call.reject(e.getMessage());}
+    }
+    @ActivityCallback private void documentResult(PluginCall call,ActivityResult result){
+        pending=false;if(call==null)return;
+        if(result.getResultCode()!=android.app.Activity.RESULT_OK||result.getData()==null){call.resolve(new JSObject().put("cancelled",true));return;}
+        try(OutputStream output=getContext().getContentResolver().openOutputStream(result.getData().getData(),"wt")){
+            if(output==null)throw new IOException("无法写入所选文件");
+            output.write(android.util.Base64.decode(call.getString("data"),android.util.Base64.DEFAULT));output.flush();call.resolve(new JSObject().put("cancelled",false));
+        }catch(Exception e){call.reject("表格导出失败："+e.getMessage());}
+    }
     private LocalDatabase database(){return ((MainActivity)getActivity()).getDatabase();}
     @PluginMethod public void exportBackup(PluginCall call){
         if(pending){call.reject("已有文件操作等待完成");return;}

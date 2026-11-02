@@ -1,3 +1,4 @@
+import { exportInventory, previewInventory, importInventory } from '../services/inventoryTransferService.js'
 import type { FastifyInstance } from 'fastify'
 
 import {
@@ -53,9 +54,12 @@ const createStockSchema = {
   required: ['definition_id'],
   additionalProperties: false,
   properties: {
+    shelf_life_days: { type: 'integer', minimum: 0, maximum: 36500 },
     definition_id: { type: 'integer' },
     quantity: { type: 'number' },
     unit: { type: 'string', minLength: 1 },
+    secondary_unit: { type: ['string', 'null'] },
+    secondary_ratio: { type: ['number', 'null'] },
     purchase_date: { type: ['string', 'null'] },
     production_date: { type: ['string', 'null'] },
     expiry_date: { type: ['string', 'null'] },
@@ -83,6 +87,8 @@ const updateStockSchema = {
     definition_id: { type: 'integer' },
     quantity: { type: 'number' },
     unit: { type: 'string', minLength: 1 },
+    secondary_unit: { type: ['string', 'null'] },
+    secondary_ratio: { type: ['number', 'null'] },
     purchase_date: { type: ['string', 'null'] },
     production_date: { type: ['string', 'null'] },
     expiry_date: { type: ['string', 'null'] },
@@ -96,10 +102,13 @@ const consumeSchema = {
   type: 'object',
   required: ['amount'],
   additionalProperties: false,
-  properties: { amount: { type: 'number' } },
+  properties: { amount: { type: 'number' }, unit: {type:'string'} },
 } as const
 
 export function registerIngredientRoutes(app: FastifyInstance): void {
+  app.get('/api/inventory-transfer', async () => exportInventory())
+  app.post<{Body:{rows:unknown;token?:unknown}}>('/api/inventory-transfer/preview', {schema:{body:{type:'object',required:['rows'],additionalProperties:false,properties:{rows:{type:'array',minItems:1,maxItems:2000,items:{type:'object'}}}}}}, async request => previewInventory(request.body.rows))
+  app.post<{Body:{rows:unknown;token:string}}>('/api/inventory-transfer/import', {schema:{body:{type:'object',required:['rows','token'],additionalProperties:false,properties:{rows:{type:'array',minItems:1,maxItems:2000,items:{type:'object'}},token:{type:'string'}}}}}, async request => importInventory(request.body.rows, request.body.token))
   /**
    * GET /api/ingredients
    * 库存列表。
@@ -259,6 +268,7 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
       const body = request.body
       const created = createStock({
         definition_id: body.definition_id as number,
+        ...('shelf_life_days' in body ? {shelf_life_days:body.shelf_life_days as number} : {}),
         quantity: body.quantity as number,
         unit: body.unit as string,
         ...('purchase_date' in body
@@ -269,6 +279,8 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
           : {}),
         ...('expiry_date' in body ? { expiry_date: body.expiry_date as string | null } : {}),
         ...('storage_method' in body ? { storage_method: body.storage_method as string } : {}),
+        ...('secondary_unit' in body ? { secondary_unit: body.secondary_unit as string | null } : {}),
+        ...('secondary_ratio' in body ? { secondary_ratio: body.secondary_ratio as number | null } : {}),
         ...('note' in body ? { note: body.note as string | null } : {}),
       })
       return reply.code(201).send(created)
@@ -305,6 +317,8 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
           : {}),
         ...('expiry_date' in body ? { expiry_date: body.expiry_date as string | null } : {}),
         ...('storage_method' in body ? { storage_method: body.storage_method as string } : {}),
+        ...('secondary_unit' in body ? { secondary_unit: body.secondary_unit as string | null } : {}),
+        ...('secondary_ratio' in body ? { secondary_ratio: body.secondary_ratio as number | null } : {}),
         ...('note' in body ? { note: body.note as string | null } : {}),
       })
 
@@ -372,7 +386,7 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
    *    不跨记录寻找，不 FIFO，不换单位。
    *    扣到 0 后记录保留（GET 默认隐藏，DB 不删）。
    */
-  app.post<{ Params: IdParams; Body: { amount: number } }>(
+  app.post<{ Params: IdParams; Body: { amount: number; unit?: string } }>(
     '/api/ingredients/:id/consume',
     { schema: { body: consumeSchema } },
     async (request, reply) => {
@@ -383,7 +397,7 @@ export function registerIngredientRoutes(app: FastifyInstance): void {
           .send(errorBody('VALIDATION_ERROR', `非法 ID：${request.params.id}。ID 必须是正整数`))
       }
 
-      return reply.code(200).send(consumeStock(id, request.body.amount))
+      return reply.code(200).send(consumeStock(id, request.body.amount, request.body.unit))
     },
   )
 }

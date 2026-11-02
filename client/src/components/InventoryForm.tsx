@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   SEASONING_CATEGORY_NAME,
   STORAGE_METHODS,
+  UNITS,
   type Category,
   type IngredientDefinitionDetail,
   type InventoryRecord,
@@ -23,6 +24,8 @@ import DefinitionQuickEditor from './DefinitionQuickEditor'
  */
 
 export interface InventoryFormValue {
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   definition_id: number
   /**
    * 数量 / 单位。
@@ -82,11 +85,19 @@ export default function InventoryForm({
     initial?.definition_id ?? '',
   )
   const [quantity, setQuantity] = useState(initial !== undefined ? String(initial.quantity) : '')
+  const [secondaryUnit, setSecondaryUnit] = useState(initial?.secondary_unit ?? '')
+  const [secondaryRatio, setSecondaryRatio] = useState(initial?.secondary_ratio == null ? '' : String(initial.secondary_ratio))
   const [unit, setUnit] = useState(initial?.unit ?? '')
   const [purchaseDate, setPurchaseDate] = useState(
     initial?.purchase_date ?? todayDateString(),
   )
   const [productionDate, setProductionDate] = useState(initial?.production_date ?? '')
+  const [shelfDays, setShelfDays] = useState('')
+  const durationDate = useMemo(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(purchaseDate) || !Number.isInteger(Number(shelfDays)) || Number(shelfDays) < 1 || Number(shelfDays) > 36500) return ''
+    const date = new Date(purchaseDate + 'T00:00:00Z'); if (!Number.isFinite(date.getTime())) return ''
+    date.setUTCDate(date.getUTCDate() + Number(shelfDays)); return date.toISOString().slice(0, 10)
+  }, [purchaseDate, shelfDays])
   const [expiryDate, setExpiryDate] = useState(initial?.expiry_date ?? '')
   const [storageMethod, setStorageMethod] = useState(initial?.storage_method ?? '常温')
   const [note, setNote] = useState(initial?.note ?? '')
@@ -201,10 +212,12 @@ export default function InventoryForm({
       }
     }
 
+    if (secondaryUnit && (secondaryUnit === unit || !Number.isFinite(Number(secondaryRatio)) || Number(secondaryRatio) < 0.000001 || Number(secondaryRatio) > 1000000)) e.relation = '请填写有效的数量关系，并选择不同的单位'
     if (unit.trim().length === 0) {
       e.unit = '请选择单位'
     }
 
+    if (shelfDays !== '' && (!Number.isInteger(Number(shelfDays)) || Number(shelfDays) < 1 || Number(shelfDays) > 36500)) e.shelf_days = '请填写 1 到 36500 的整数天数'
     if (purchaseDate.trim().length === 0) {
       e.purchase_date = '入库日期不能为空'
     }
@@ -238,15 +251,18 @@ export default function InventoryForm({
         return
       }
 
+      const durationExpiry = shelfDays === '' ? null : durationDate
       await onSubmit({
         definition_id: isEdit ? initial.definition_id : Number(definitionId),
         quantity: Number(quantity),
         unit,
+        secondary_unit: secondaryUnit || null,
+        secondary_ratio: secondaryUnit ? Number(secondaryRatio) : null,
         purchase_date: purchaseDate.trim().length > 0 ? purchaseDate : null,
         production_date: productionDate.trim().length > 0 ? productionDate : null,
         // 编辑模式下，只有用户改动过到期日期才发送该字段；
         // 清空则发送 null（后端会清空且不重算）。
-        expiry_date: isEdit
+        expiry_date: durationExpiry ?? (isEdit
           ? expiryDate !== (initial.expiry_date ?? '')
             ? expiryDate.trim().length > 0
               ? expiryDate
@@ -254,7 +270,7 @@ export default function InventoryForm({
             : undefined
           : expiryDate.trim().length > 0
             ? expiryDate
-            : undefined,
+            : undefined),
         storage_method: storageMethod,
         note: note.trim().length > 0 ? note.trim() : null,
       })
@@ -366,6 +382,13 @@ export default function InventoryForm({
               </label>
               {errors.purchase_date && <p className="field-error">{errors.purchase_date}</p>}
 
+              <fieldset><legend>另一种数量（可不填）</legend>
+                <p className="hint">只设置这一批。例如：数量填 3 个，再填 1 个 = 200 克，总量就是 600 克。烹饪与消耗共用这份库存。</p>
+                <label>1 {unit || '当前单位'} 等于<input type="number" min="0.000001" max="1000000" step="any" value={secondaryRatio} onChange={e => setSecondaryRatio(e.target.value)} /></label>
+                <label>另一单位<select value={secondaryUnit} onChange={e => setSecondaryUnit(e.target.value)}><option value="">不设置</option>{UNITS.filter(u => u !== unit).map(u => <option key={u}>{u}</option>)}</select></label>
+                {secondaryUnit && Number(secondaryRatio) > 0 && Number(quantity) > 0 && <p>总量：{Number((Number(quantity) * Number(secondaryRatio)).toFixed(6))} {secondaryUnit}</p>}
+                {errors.relation && <p className="field-error">{errors.relation}</p>}
+              </fieldset>
               <label>
                 生产日期（不知道可留空）
                 <input
@@ -375,11 +398,17 @@ export default function InventoryForm({
                 />
               </label>
 
+              <label>本批保质期（天，可不填）
+                <input type="number" min="1" max="36500" step="1" value={shelfDays} onChange={e => setShelfDays(e.target.value)} placeholder="例如 30" />
+              </label>
+              <p className="hint">从入库日期起计算，仅用于这一批，不修改食材默认设置。填写后优先使用此天数。</p>
+              {errors.shelf_days && <p className="field-error">{errors.shelf_days}</p>}
               <label>
                 到期日期
                 <input
                   type="date"
-                  value={expiryDate}
+                  disabled={shelfDays !== ''}
+                  value={shelfDays !== '' ? durationDate : expiryDate}
                   onChange={(e) => setExpiryDate(e.target.value)}
                 />
               </label>

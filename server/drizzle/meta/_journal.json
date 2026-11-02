@@ -106,6 +106,13 @@
       "when": 1792099200000,
       "tag": "0014_tag_taxonomy",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1793491200000,
+      "tag": "0015_stock_unit_relation",
+      "breakpoints": true
     }
   ]
 }

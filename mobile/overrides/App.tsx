@@ -190,7 +190,7 @@ export default function App() {
           <DefinitionsPage onDefinitionsChanged={handleDefinitionsChanged} />
         )}
         {view === 'recipes' && <RecipesPage />}
-        {view === 'cooking' && <CookingPage initialSessionId={cookingInitialSessionId} />}
+        {view === 'cooking' && <CookingPage initialSessionId={cookingInitialSessionId} onStartMeal={() => navigate('recommend')} />}
         {view === 'recommend' && (
           <RecommendPage
             onBack={() => navigate('home')}

@@ -1,6 +1,6 @@
 {
   "name": "homechef-desktop",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "private": true,
   "description": "HomeChef 桌面客户端（Windows）",
   "main": "dist/main.js",

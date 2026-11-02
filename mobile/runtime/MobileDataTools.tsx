@@ -1,3 +1,4 @@
+import InventoryTransferPanel from '@homechef/client/src/components/InventoryTransferPanel';
 import { registerPlugin } from '@capacitor/core';
 import { useState } from 'react';
 import StarterContentPanel from '@homechef/client/src/components/StarterContentPanel';
@@ -28,6 +29,7 @@ export default function MobileDataTools() {
 
   return <>
     <StarterContentPanel disabled={busy} onBusyChange={setBusy} />
+    <InventoryTransferPanel />
     <section className="settings-group mobile-data-tools">
       <h3>手机数据</h3>
       <p>数据保存在这台手机里，不需要电脑或网络。卸载或清除数据前，请先导出备份。</p>
@@ -37,7 +39,7 @@ export default function MobileDataTools() {
       </div>
       <p className="hint">恢复会替换手机上的当前数据。仅支持结构兼容的安卓备份，不会自动同步电脑数据。</p>
       <p role="status">{message}</p>
-      <small>HomeChef Android · v0.2.5</small>
+      <small>HomeChef Android · v0.3.0</small>
     </section>
   </>;
 }

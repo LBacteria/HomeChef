@@ -184,7 +184,7 @@ export default function HomePage({ onNavigate, onOpenMore }: Props) {
             <span className="stove-glow" aria-hidden="true" />
             <PotIcon className="stove-center-icon" />
             <span className="stove-center-title">开始烹饪</span>
-            <span className="stove-center-sub">开启今天的美味</span>
+            <span className="stove-center-sub">小助手帮你选一餐</span>
           </button>
         </div>
       </div>

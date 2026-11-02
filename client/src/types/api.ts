@@ -97,6 +97,8 @@ export interface UpdateDefinitionInput {
  *    definition_id 是关联键，需要前端用 definitions 列表映射出名称。
  */
 export interface InventoryRecord {
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   /** ⚠️ 这是 inventory record 的 ID，不是 definition ID */
   id: number
   /** 指向食材定义 */
@@ -207,6 +209,8 @@ export interface CreateInventoryInput {
   quantity?: number
   /** 单位。调味品不需要；普通食材必须提供且属于允许单位 */
   unit?: string
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   purchase_date?: string | null
   production_date?: string | null
   /** 提供则为 manual；不提供则由后端估算 */
@@ -233,6 +237,8 @@ export interface UpdateInventoryInput {
   definition_id?: number
   quantity?: number
   unit?: string
+  secondary_unit?: string | null
+  secondary_ratio?: number | null
   purchase_date?: string | null
   production_date?: string | null
   expiry_date?: string | null
@@ -242,6 +248,7 @@ export interface UpdateInventoryInput {
 
 /** 消耗库存 */
 export interface ConsumeInventoryInput {
+  unit?: string
   amount: number
 }
 
@@ -746,6 +753,8 @@ export interface RecommendationDish {
    * v0.2.4：本餐中的角色。**后端是唯一权威**，前端只渲染，不自行推断。
    */
   role_in_meal: 'main' | 'side'
+  /** Stable soup identity, independent of renamed display tags. */
+  is_soup: boolean
   /** 份数倍数（人数 ÷ 基准人数），可直接用于进入烹饪 */
   servings: number
   tags: string[]
